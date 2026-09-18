@@ -1,0 +1,6 @@
+{
+  "name": "cantelop", "version": "0.1.0", "private": true, "type": "module",
+  "description": "Per-user hosted Claude Code API scaffold",
+  "engines": {"node": ">=22"},
+  "scripts": {"start": "node --env-file-if-exists=.env src/index.js", "test": "node --test", "check": "node --check src/server.js && node --check src/runtime.js && node --check src/service.js"}
+}
