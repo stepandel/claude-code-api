@@ -11,8 +11,7 @@
     "dev": "cantelop dev",
     "build": "cantelop build",
     "check": "tsc -p tsconfig.api.json && tsc -p tsconfig.session.json",
-    "test": "node --import tsx --test test/*.test.ts",
-    "dev:token": "node scripts/dev-token.mjs"
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@cantelop/sdk": "0.9.1"

@@ -41,17 +41,15 @@ Requires Node.js 22+, the Cantelop CLI, Bun, and Docker with `linux/amd64` suppo
 
 ```sh
 npm ci
-# Generates an ignored local private key and prints a one-hour application JWT.
-node scripts/dev-token.mjs alice
-# Only public verification configuration goes into the App environment.
-cp .dev/public.env .env
+cp .env.example .env
+# Set AUTH_PUBLIC_JWK, AUTH_ISSUER, and AUTH_AUDIENCE for your identity provider.
 npm run check
 npm test
 npm run build
 npm run dev
 ```
 
-Save the printed JWT as `USER_TOKEN`. Use the API base URL printed by `cantelop dev` as `BASE_URL`. Issue another token with `node scripts/dev-token.mjs bob` to test a separate Workspace. The ignored `.dev/signing-key.pem` must remain on the trusted local host; it is excluded from the Docker build context. Never put it into Cantelop environment variables or a Workspace. Do not use this development issuer in production.
+Use an ES256 JWT issued by your application authentication system as `USER_TOKEN`, matching the public key, issuer, and audience configured in `.env`. Use the API base URL printed by `cantelop dev` as `BASE_URL`. The project does not issue application tokens.
 
 `npm run build` runs `cantelop build`, which reads `cantelop.json` and builds both the Edge API and native Session image. For a reproducible production image, pin the Dockerfile's `CLAUDE_VERSION` to an audited version; the scaffold defaults to Anthropic's stable channel.
 
