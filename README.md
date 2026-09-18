@@ -2,6 +2,24 @@
 
 A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.9.1`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
 
+## Verified upstream reference
+
+Checked directly against GitHub and npm on September 18, 2026. The npm `latest`
+version is **0.9.1**, already pinned in this project. GitHub `main` and the
+`sdk-v0.9.1` release tag both resolve to
+[`7783e37a5fbadaae15d2a4f8b287e69d1651aa2d`](https://github.com/stepandel/cantelop-sdk/commit/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d).
+This check used a fresh upstream fetch, not other local projects.
+
+Reviewed references:
+
+- [SDK README](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/README.md): Edge/Session architecture, Workspaces, managed activities, recovery, runtime images, and event transport.
+- [Resource contracts](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/src/resources.ts) and [Session contracts](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/src/session.ts): the APIs used by this application, including `onRecover` and internal `send`.
+- [Manifest schema](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/schemas/app-v2.json): entrypoints, custom Dockerfile, and environment declarations.
+- [Anthropic example](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/examples/anthropic/README.md): uses Claude Agent SDK with an API key and streaming input priorities (`now`/`later`). This project's native CLI adapter deliberately has different steering semantics: interrupt-and-resume, with a durable application queue. It is not a copy of that provider example.
+
+The SDK's public resource contracts expose no terminal attachment API. Native
+subscription onboarding still requires the separate terminal integration below.
+
 ## Architecture
 
 - `src/api.ts`: `defineApi`, JWT verification, `app.workspaces.open`, `app.sessions.open`, dispatch, and authenticated event streaming. No local server or Docker daemon management.
