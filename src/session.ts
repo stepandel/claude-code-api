@@ -1,11 +1,13 @@
 import { defineSessionBehaviour, type SessionContext, type SessionOutput } from '@cantelop/sdk/session';
 import { randomUUID } from 'node:crypto';
 import { NativeClaude, type ClaudeRuntime } from './claude.js';
+import { Login } from './login.js';
 import { StateStore, type State } from './state.js';
 import type { Command, Event, Message, Status } from './contracts.js';
 type Context = SessionContext<Command,Event>;
 
 export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), workspace = '/workspace') {
+  const login = new Login(() => runtime.authenticated());
   let state: State | undefined, store: StateStore | undefined;
   let active: {message: Message; controller: AbortController; outcome?: Status} | undefined;
   const save = () => store!.save(state!);
@@ -62,11 +64,9 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
     async receive(context) {
       await initialize(context.session.id);
       const command = context.message.payload;
-      if (command.type === 'auth.prepare') {
-        await context.output.send({type:'auth.required',workspace,command:`CLAUDE_CONFIG_DIR=${workspace}/.claude claude auth login`}); return;
-      }
-      if (command.type === 'auth.check') {
-        await context.output.send({type:'auth.status',authenticated:await runtime.authenticated()}); return;
+      if (await login.receive(context)) return;
+      if (context.session.id.endsWith(':auth')) {
+        await context.output.send({type:'error',code:'agent_session_required'}); return;
       }
       if (command.type === 'snapshot') { await snapshot(context.output); return; }
       if (command.type === 'configure') {
@@ -104,6 +104,7 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
     },
     async onRecover(context) {
       await initialize(context.session.id);
+      if (context.session.id.endsWith(':auth')) { await context.output.send({type:'auth.reset'}); return; }
       await snapshot(context.output);
       // The interrupted turn stays interrupted. Queued, not-yet-started work resumes.
       context.send({type:'drain'});

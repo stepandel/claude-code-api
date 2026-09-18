@@ -7,14 +7,21 @@ export interface SessionConfig {
   mcps: Record<string, McpServer>;
 }
 export type Command =
-  | { type: 'auth.prepare' | 'auth.check' | 'snapshot' | 'drain' }
+  | { type: 'auth.check' | 'snapshot' | 'drain' }
+  | { type: 'auth.start'; attemptId: string; publicKey: JsonWebKey }
+  | { type: 'auth.input'; attemptId: string; sequence: number; iv: string; data: string }
+  | { type: 'auth.cancel'; attemptId: string }
   | { type: 'configure'; config: SessionConfig }
   | { type: 'queue' | 'steer'; id: string; text: string }
   | { type: 'cancel'; id: string };
 export type Status = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'steered' | 'interrupted';
 export interface Message { id: string; text: string; status: Status }
 export type Event =
-  | { type: 'auth.required'; command: string; workspace: string }
+  | { type: 'auth.started'; attemptId: string; publicKey: JsonWebKey; expiresAt: number }
+  | { type: 'auth.output'; attemptId: string; terminalSequence: number; iv: string; data: string }
+  | { type: 'auth.finished'; attemptId: string; outcome: 'succeeded' | 'failed' | 'cancelled' | 'expired'; authenticated: boolean }
+  | { type: 'auth.error'; attemptId: string; code: string; activeAttemptId?: string }
+  | { type: 'auth.reset' }
   | { type: 'auth.status'; authenticated: boolean }
   | { type: 'session.ready'; sessionId: string }
   | { type: 'session.state'; messages: Message[]; configured: boolean; truncated: boolean }

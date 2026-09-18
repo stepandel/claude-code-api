@@ -33,7 +33,7 @@ test('SDK allocates server-selected user Workspace and native-auth Session; repe
   const a = await first.json();
   assert.match(a.workspaceSlug,/^u-[a-f0-9]{48}$/);
   assert.equal(a.sessionId,`${a.workspaceSlug.slice(2)}:auth`);
-  assert.deepEqual(f.dispatched,[{type:'auth.prepare'}]);
+  assert.deepEqual(f.dispatched,[{type:'auth.check'}]);
   assert.equal((await (await f.request('/v1/auth',{})).json()).sessionId,a.sessionId);
   assert.notEqual((await (await f.request('/v1/auth',{},token('bob'))).json()).workspaceSlug,a.workspaceSlug);
 });
@@ -73,4 +73,22 @@ test('reject credentials, invalid MCPs and oversized requests', async () => {
   assert.equal((await f.request('/v1/sessions',{tools:['a,b']})).status,400);
   assert.equal((await f.request('/v1/sessions',{tools:['--dangerously-skip-permissions']})).status,400);
   assert.equal((await f.request('/v1/auth',{data:'x'.repeat(50000)})).status,413);
+});
+test('login bridge accepts only public keys and encrypted input scoped to caller auth actor',async()=>{
+  const f=fixture(),publicKey=pair.publicKey.export({format:'jwk'}),attemptId=crypto.randomUUID();
+  const r=await f.request('/v1/auth',{attemptId,publicKey});assert.equal(r.status,202);
+  assert.equal(f.dispatched.at(-1)?.type,'auth.start');
+  assert.equal((await f.request('/v1/auth/input',{attemptId,code:'plaintext'})).status,400);
+  assert.equal((await f.request('/v1/auth/input',{attemptId,sequence:1,iv:'A'.repeat(16),data:'A'.repeat(24)})).status,202);
+  assert.match(f.opened.at(-1).id,/:auth$/);
+  assert.equal((await f.request('/v1/auth/cancel',{attemptId})).status,202);
+  assert.equal((await f.request('/v1/auth',{attemptId,publicKey:{...publicKey,d:'private'}})).status,400);
+  assert.equal((await f.request('/v1/auth/input',{attemptId,sessionId:'other:auth',sequence:1,iv:'A'.repeat(16),data:'A'.repeat(24)})).status,400);
+});
+test('login page is self-contained with restrictive CSP and no token persistence',async()=>{
+  const f=fixture(),res=await f.request('/login',undefined,'');assert.equal(res.status,200);
+  const html=await res.text();assert.match(html,/Connect your Claude subscription/);
+  assert.match(res.headers.get('content-security-policy')!,/frame-ancestors 'none'/);
+  assert.match(res.headers.get('content-security-policy')!,/connect-src 'self'/);
+  assert.equal(res.headers.get('cache-control'),'no-store');assert.ok(!html.includes('localStorage'));assert.ok(!html.includes('sessionStorage'));
 });

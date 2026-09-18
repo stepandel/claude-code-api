@@ -89,7 +89,7 @@ test('unauthenticated native runtime fails turn without starting Claude',async t
   const {runtime,h} = await fixture(t);runtime.signedIn = false;
   await h.send({type:'auth.check'});await h.send({type:'queue',id:'a',text:'a'});await h.idle();
   assert.equal(runtime.runs.length,0);
-  assert.ok(h.events.some(e=>e.type==='auth.status'&&!e.authenticated));
+  assert.ok(h.events.some(e=>e.type==='error'&&e.code==='auth_session_required'));
   assert.ok(h.events.some(e=>e.type==='message.status'&&e.status==='failed'));
 });
 test('large Claude events are fragmented within SDK output size limit',async t => {
@@ -116,4 +116,12 @@ test('SDK recovery restarts only pending work and preserves interrupted status',
   assert.equal(runtime.runs[0]!.turn.text,'not started');
   runtime.runs[0]!.resolve();await replacement.idle();
   assert.equal((await store.load()).messages.find(m=>m.id==='running')?.status,'interrupted');
+});
+test('auth Sandbox recovery requests a fresh handshake instead of replaying login',async t=>{
+  const {root,runtime}=await fixture(t),events:Event[]=[];
+  await createBehaviour(runtime,root).onRecover!({signal:new AbortController().signal,
+    recovery:{id:'recovery',interruptedMessageId:'login'},session:{id:'tenant:auth',workspaceSlug:'user',keepAliveSeconds:300},
+    env:{},output:{send:async e=>{events.push(e);}},send:()=>{throw new Error('must not replay auth');},
+    activity:{active:false,start:()=>{throw new Error('must not restart login');},cancel:()=>false,extend:()=>{}}});
+  assert.deepEqual(events,[{type:'auth.reset'}]);assert.equal(runtime.runs.length,0);
 });

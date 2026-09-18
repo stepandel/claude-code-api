@@ -1,5 +1,6 @@
 import { defineApi, type HttpMethod } from '@cantelop/sdk/api';
 import type { Command } from './contracts.js';
+import { loginPage } from './login-page.js';
 import { identity } from './auth.js';
 import { ApiError, config, fail, fields, readBody, uuid } from './validation.js';
 
@@ -22,16 +23,38 @@ export default defineApi<Command>(({ app, router, env }) => {
   };
   const accepted = (sessionId: string, message: {id:string}, extra = {}) => Response.json(
     {sessionId, receiptId: message.id, ...extra}, {status:202, headers:{'cache-control':'no-store'}});
+  route('GET', '/login', async () => loginPage());
   route('GET', '/health', async () => Response.json({ok:true}));
   route('POST', '/v1/auth', async request => {
     const user = await identity(request, env);
-    fields(await readBody(request), []);
+    const body = await readBody(request); fields(body,['attemptId','publicKey']);
+    let start: Command = {type:'auth.check'};
+    if(body.attemptId !== undefined || body.publicKey !== undefined) {
+      const attemptId=uuid(body.attemptId); fields(body.publicKey,['kty','crv','x','y','ext','key_ops']);
+      const k=body.publicKey;
+      if(k.kty!=='EC'||k.crv!=='P-256'||typeof k.x!=='string'||typeof k.y!=='string'||
+        !/^[A-Za-z0-9_-]{43}$/.test(k.x)||!/^[A-Za-z0-9_-]{43}$/.test(k.y)) fail('Invalid terminal public key');
+      start={type:'auth.start',attemptId,publicKey:{kty:'EC',crv:'P-256',x:k.x,y:k.y}};
+    }
     const workspace = await app.workspaces.open({slug:user.workspaceSlug});
     const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:900});
-    const receipt = await session.dispatch({type:'auth.prepare'});
+    const receipt = await session.dispatch(start);
     return accepted(session.id, receipt, {workspaceId:workspace.id, workspaceSlug:workspace.slug, workspace:'/workspace',
-      nativeLogin: 'CLAUDE_CONFIG_DIR=/workspace/.claude claude auth login',
-      next: 'Use a trusted terminal attached to this user workspace, complete native sign-in, then POST /v1/auth/complete. Terminal access is not provided by this scaffold.'});
+      loginPage:'/login'});
+  });
+  for(const action of ['input','cancel'] as const) route('POST', `/v1/auth/${action}`, async request=>{
+    const user=await identity(request,env), body=await readBody(request);
+    fields(body,action==='input'?['attemptId','sequence','iv','data']:['attemptId']);
+    const attemptId=uuid(body.attemptId);
+    let command:Command={type:'auth.cancel',attemptId};
+    if(action==='input') {
+      if(!Number.isSafeInteger(body.sequence)||Number(body.sequence)<1||
+        typeof body.iv!=='string'||!/^[A-Za-z0-9+/]{16}$/.test(body.iv)||
+        typeof body.data!=='string'||body.data.length<24||body.data.length>8192||!/^[A-Za-z0-9+/]+={0,2}$/.test(body.data)) fail('Invalid encrypted terminal frame');
+      command={type:'auth.input',attemptId,sequence:Number(body.sequence),iv:body.iv,data:body.data};
+    }
+    const session=app.sessions.open({id:`${user.userId}:auth`,workspaceSlug:user.workspaceSlug,keepAliveSeconds:300});
+    return accepted(session.id,await session.dispatch(command));
   });
   route('POST', '/v1/auth/complete', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);
