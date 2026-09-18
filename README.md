@@ -2,23 +2,7 @@
 
 A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.9.1`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
 
-## Verified upstream reference
-
-Checked directly against GitHub and npm on September 18, 2026. The npm `latest`
-version is **0.9.1**, already pinned in this project. GitHub `main` and the
-`sdk-v0.9.1` release tag both resolve to
-[`7783e37a5fbadaae15d2a4f8b287e69d1651aa2d`](https://github.com/stepandel/cantelop-sdk/commit/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d).
-This check used a fresh upstream fetch, not other local projects.
-
-Reviewed references:
-
-- [SDK README](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/README.md): Edge/Session architecture, Workspaces, managed activities, recovery, runtime images, and event transport.
-- [Resource contracts](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/src/resources.ts) and [Session contracts](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/src/session.ts): the APIs used by this application, including `onRecover` and internal `send`.
-- [Manifest schema](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/schemas/app-v2.json): entrypoints, custom Dockerfile, and environment declarations.
-- [Anthropic example](https://github.com/stepandel/cantelop-sdk/blob/7783e37a5fbadaae15d2a4f8b287e69d1651aa2d/examples/anthropic/README.md): uses Claude Agent SDK with an API key and streaming input priorities (`now`/`later`). This project's native CLI adapter deliberately has different steering semantics: interrupt-and-resume, with a durable application queue. It is not a copy of that provider example.
-
-The SDK's public resource contracts expose no terminal attachment API. Native
-subscription onboarding still requires the separate terminal integration below.
+SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.9.1). Version 0.9.1 was verified against GitHub and npm on September 18, 2026.
 
 ## Architecture
 
@@ -69,7 +53,7 @@ npm run dev
 
 Save the printed JWT as `USER_TOKEN`. Use the API base URL printed by `cantelop dev` as `BASE_URL`. Issue another token with `node scripts/dev-token.mjs bob` to test a separate Workspace. The ignored `.dev/signing-key.pem` must remain on the trusted local host; it is excluded from the Docker build context. Never put it into Cantelop environment variables or a Workspace. Do not use this development issuer in production.
 
-`npm run build` bundles the Edge Worker and Bun Session runtime through `@cantelop/sdk/build`. `cantelop build` additionally builds and qualifies the native runtime image. For a reproducible production image, pin the Dockerfile's `CLAUDE_VERSION` to an audited version; the scaffold defaults to Anthropic's stable channel.
+`npm run build` runs `cantelop build`, which reads `cantelop.json` and builds both the Edge API and native Session image. For a reproducible production image, pin the Dockerfile's `CLAUDE_VERSION` to an audited version; the scaffold defaults to Anthropic's stable channel.
 
 ## API usage
 

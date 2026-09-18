@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "cantelop dev",
-    "build": "node scripts/build.mjs",
+    "build": "cantelop build",
     "check": "tsc -p tsconfig.api.json && tsc -p tsconfig.session.json",
     "test": "node --import tsx --test test/*.test.ts",
     "dev:token": "node scripts/dev-token.mjs"
