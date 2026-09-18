@@ -1,6 +1,25 @@
 {
-  "name": "cantelop", "version": "0.1.0", "private": true, "type": "module",
-  "description": "Per-user hosted Claude Code API scaffold",
-  "engines": {"node": ">=22"},
-  "scripts": {"start": "node --env-file-if-exists=.env src/index.js", "test": "node --test", "check": "node --check src/server.js && node --check src/runtime.js && node --check src/service.js"}
+  "name": "cantelop-claude-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cantelop Edge API and Session actors hosting unmodified Claude Code",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "cantelop dev",
+    "build": "node scripts/build.mjs",
+    "check": "tsc -p tsconfig.api.json && tsc -p tsconfig.session.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "dev:token": "node scripts/dev-token.mjs"
+  },
+  "dependencies": {
+    "@cantelop/sdk": "0.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3"
+  }
 }

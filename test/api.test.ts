@@ -1,0 +1,76 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign } from 'node:crypto';
+import api from '../src/api.js';
+import type { CantelopApp } from '@cantelop/sdk/api';
+import type { Command } from '../src/contracts.js';
+const pair = generateKeyPairSync('ec',{namedCurve:'P-256'});
+const env = {AUTH_PUBLIC_JWK:JSON.stringify(pair.publicKey.export({format:'jwk'})),AUTH_ISSUER:'test',AUTH_AUDIENCE:'api'};
+function token(sub = 'alice', extra = {}, key = pair.privateKey) {
+  const encode = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url');
+  const input = `${encode({alg:'ES256'})}.${encode({sub,iss:'test',aud:'api',exp:Math.floor(Date.now()/1000)+300,...extra})}`;
+  return `${input}.${sign('sha256',Buffer.from(input),{key,dsaEncoding:'ieee-p1363'}).toString('base64url')}`;
+}
+function fixture() {
+  const opened: any[] = [], workspaces: any[] = [], dispatched: Command[] = [];
+  const app = {
+    workspaces:{open:async (input: any) => {workspaces.push(input); return {id:'ws-1',slug:input.slug};}},
+    sessions:{open:(input: any) => {
+      opened.push(input);
+      return {...input,dispatch:async (command: Command) => {dispatched.push(command);return {id:'receipt'};},
+        events:async (request: Request) => new Response(request.headers.get('Last-Event-ID'),{headers:{'content-type':'text/event-stream'}})};
+    }}
+  } as unknown as CantelopApp<Command>;
+  const router = api.create({app,env});
+  const request = async (path: string, body?: unknown, auth = token(), headers = {}) => router.handle(new Request(`https://app.example${path}`,{
+    method:body === undefined ? 'GET' : 'POST',headers:{authorization:`Bearer ${auth}`,...headers},
+    ...(body === undefined ? {} : {body:JSON.stringify(body)})}));
+  return {request,opened,workspaces,dispatched};
+}
+test('SDK allocates server-selected user Workspace and native-auth Session; repeat provisioning is stable', async () => {
+  const f = fixture();
+  const first = await f.request('/v1/auth',{}); assert.equal(first.status,202);
+  const a = await first.json();
+  assert.match(a.workspaceSlug,/^u-[a-f0-9]{48}$/);
+  assert.equal(a.sessionId,`${a.workspaceSlug.slice(2)}:auth`);
+  assert.deepEqual(f.dispatched,[{type:'auth.prepare'}]);
+  assert.equal((await (await f.request('/v1/auth',{})).json()).sessionId,a.sessionId);
+  assert.notEqual((await (await f.request('/v1/auth',{},token('bob'))).json()).workspaceSlug,a.workspaceSlug);
+});
+test('reject invalid identity, expired JWT, wrong audience and forged signatures before provisioning', async () => {
+  const f = fixture();
+  const other = generateKeyPairSync('ec',{namedCurve:'P-256'});
+  for (const value of ['bad',token('alice',{exp:1}),token('alice',{aud:'wrong'}),token('alice',{},other.privateKey)])
+    assert.equal((await f.request('/v1/auth',{},value)).status,401);
+  assert.equal(f.workspaces.length,0);
+});
+test('tenant ownership checked before Session dispatch and event streaming', async () => {
+  const f = fixture();
+  const created = await (await f.request('/v1/sessions',{tools:['Read']})).json();
+  const count = f.opened.length;
+  assert.equal((await f.request('/v1/messages',{sessionId:created.sessionId,text:'steal'},token('bob'))).status,404);
+  assert.equal((await f.request(`/v1/events?sessionId=${created.sessionId}`,undefined,token('bob'))).status,404);
+  assert.equal(f.opened.length,count);
+  const response = await f.request(`/v1/events?sessionId=${created.sessionId}`,undefined,token(),{'Last-Event-ID':'stream:7'});
+  assert.equal(await response.text(),'stream:7');
+});
+test('queue, steer, cancel, auth checks and per-session MCP configurations dispatch SDK messages', async () => {
+  const f = fixture();
+  const config = {tools:['Read'],allowedTools:['Read','mcp__docs__search'],mcps:{docs:{type:'http',url:'https://example.com/mcp'}}};
+  const sessionId = (await (await f.request('/v1/sessions',config)).json()).sessionId;
+  assert.deepEqual(f.dispatched[0],{type:'configure',config});
+  const sent = await (await f.request('/v1/messages',{sessionId,text:'first',mode:'queue'})).json();
+  assert.equal(sent.receiptId,'receipt'); assert.ok(sent.messageId);
+  await f.request('/v1/messages',{sessionId,text:'change direction',mode:'steer'});
+  await f.request('/v1/cancel',{sessionId,messageId:sent.messageId});
+  await f.request('/v1/auth/complete',{});
+  assert.deepEqual(f.dispatched.map(m => m.type),['configure','queue','steer','cancel','auth.check']);
+});
+test('reject credentials, invalid MCPs and oversized requests', async () => {
+  const f = fixture();
+  assert.equal((await f.request('/v1/auth',{claudeToken:'secret'})).status,400);
+  assert.equal((await f.request('/v1/sessions',{mcps:{x:{type:'http',url:'file:///etc/passwd'}}})).status,400);
+  assert.equal((await f.request('/v1/sessions',{tools:['a,b']})).status,400);
+  assert.equal((await f.request('/v1/sessions',{tools:['--dangerously-skip-permissions']})).status,400);
+  assert.equal((await f.request('/v1/auth',{data:'x'.repeat(50000)})).status,413);
+});
