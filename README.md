@@ -162,7 +162,11 @@ Sessions share files within the same user's Workspace; concurrent sessions can e
 
 ## Deployment and remaining work
 
-Configure the public identity settings in `cantelop.json` through Cantelop App configuration, then use the standard `cantelop doctor` / `cantelop deploy --dry-run` / `cantelop deploy` workflow. A dry run builds without publishing. No deployment is performed by the scaffold.
+Configure the public identity settings in `cantelop.json` through Cantelop App configuration, then use the standard `cantelop doctor` / `cantelop deploy --dry-run` / `cantelop deploy` workflow. A dry run builds without publishing.
+
+The deployment target created on September 19, 2026 is `cantelop-claude-api` (`app_ec792797727123ecb98676c7e98e7e73`). Check activation with `npx cantelop releases`; submitting a deployment does not by itself mean it is live.
+
+Initial owner access uses a dedicated ES256 signing key, issuer `cantelop-claude-api-owner`, and audience `cantelop-claude-api`. Only the public verification settings are configured in Cantelop. On the machine that created this deployment, `.cantelop/deployment-auth/signing-key.pem` holds the private key and `.cantelop/deployment-auth/owner-token.txt` holds the initial bearer token (expires September 20, 2026 at 20:09:59 UTC). These files have owner-only permissions and are excluded from Git and Docker builds. Paste the token into `/login` once the release is active. The token authenticates the local owner identity; Claude subscription authentication still uses the native login flow. This initial access setup is not a multi-user identity provider. Keep the key secure and issue a fresh token or configure your identity provider when the initial token expires.
 
 Before production: integrate your identity issuer and key rotation/revocation strategy, add user quotas and admission/rate limits, and define Workspace retention/backup/deletion policies. Review network access for your MCP services under Cantelop's sandbox policy. Do not place shared provider credentials or application signing keys in App environment variables visible to native Sessions.
 
