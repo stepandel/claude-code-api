@@ -92,3 +92,29 @@ test('login page is self-contained with restrictive CSP and no token persistence
   assert.match(res.headers.get('content-security-policy')!,/connect-src 'self'/);
   assert.equal(res.headers.get('cache-control'),'no-store');assert.ok(!html.includes('localStorage'));assert.ok(!html.includes('sessionStorage'));
 });
+
+test('execution settings dispatch with MCPs and reject invalid values before opening a session', async () => {
+  const f = fixture();
+  const settings = {model:'claude-sonnet-5',systemPrompt:'Canvas rules 😀',maxTurns:24,tools:[],
+    allowedTools:['mcp__doop__*'],mcps:{doop:{type:'http',url:'https://doop.example/mcp',headers:{Authorization:'Bearer run-token'}}}};
+  assert.equal((await f.request('/v1/sessions',settings)).status,202);
+  assert.deepEqual(f.dispatched[0],{type:'configure',config:settings});
+  const count=f.opened.length;
+  for (const invalid of [
+    {model:''},{model:'--help'},{model:'sonnet --help'},{model:4},{model:'a'.repeat(129)},
+    {systemPrompt:''},{systemPrompt:'   '},{systemPrompt:12},{systemPrompt:'😀'.repeat(8193)},
+    {maxTurns:0},{maxTurns:101},{maxTurns:1.5},{maxTurns:'24'},{maxTurns:null},
+  ]) assert.equal((await f.request('/v1/sessions',invalid)).status,400,JSON.stringify(invalid).slice(0,80));
+  assert.equal(f.opened.length,count);
+  assert.equal((await f.request('/v1/sessions',{systemPrompt:'x'.repeat(32768),maxTurns:100})).status,202);
+});
+test('message UTF-8 limit allows larger context and preserves the encoded body limit', async () => {
+  const f=fixture(),sessionId=(await (await f.request('/v1/sessions',{})).json()).sessionId;
+  const text='😀'.repeat(8192);
+  assert.equal((await f.request('/v1/messages',{sessionId,text})).status,202);
+  assert.equal((f.dispatched.at(-1) as any).text,text);
+  const count=f.dispatched.length;
+  assert.equal((await f.request('/v1/messages',{sessionId,text:text+'x'})).status,400);
+  assert.equal((await f.request('/v1/messages',{sessionId,text:'x'.repeat(50000)})).status,413);
+  assert.equal(f.dispatched.length,count);
+});

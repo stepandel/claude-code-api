@@ -51,7 +51,7 @@ function harness(runtime: FakeClaude, root: string) {
 async function fixture(t: any) {
   const root = await mkdtemp(join(tmpdir(),'cantelop-test-'));t.after(() => rm(root,{recursive:true,force:true}));
   const runtime = new FakeClaude(), h = harness(runtime,root);
-  await h.send({type:'configure',config:{tools:['Read'],allowedTools:[],mcps:{}}});
+  await h.send({type:'configure',config:{tools:['Read'],allowedTools:[],mcps:{},model:'sonnet',systemPrompt:'Persisted rules',maxTurns:24}});
   return {root,runtime,h};
 }
 test('managed activity keeps mailbox responsive; steering precedes FIFO queue and resumes conversation',async t => {
@@ -83,7 +83,10 @@ test('durable configuration survives reactivation; interrupted work is not repla
   assert.ok(snapshot?.type==='session.state');assert.equal(snapshot.messages[0]?.status,'interrupted');
   assert.equal(runtime.runs.length,0);
   await replacement.send({type:'queue',id:'new',text:'next'});await until(()=>runtime.runs.length===1);
-  assert.equal(runtime.runs[0]!.turn.resume,true);runtime.runs[0]!.resolve();await replacement.idle();
+  assert.equal(runtime.runs[0]!.turn.resume,true);
+  assert.deepEqual(runtime.runs[0]!.turn.config,state.config);
+  assert.equal(runtime.runs[0]!.turn.config.systemPrompt,'Persisted rules');
+  runtime.runs[0]!.resolve();await replacement.idle();
 });
 test('unauthenticated native runtime fails turn without starting Claude',async t => {
   const {runtime,h} = await fixture(t);runtime.signedIn = false;

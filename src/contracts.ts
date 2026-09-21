@@ -2,6 +2,9 @@ export type McpServer =
   | { type: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
   | { type: 'http' | 'sse'; url: string; headers?: Record<string, string> };
 export interface SessionConfig {
+  model?: string;
+  systemPrompt?: string;
+  maxTurns?: number;
   tools: string[];
   allowedTools: string[];
   mcps: Record<string, McpServer>;

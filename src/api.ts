@@ -69,7 +69,7 @@ export default defineApi<Command>(({ app, router, env }) => {
   route('POST', '/v1/messages', async request => {
     const b = await readBody(request); fields(b, ['sessionId','text','mode','messageId']);
     const session = await userSession(request, b.sessionId);
-    if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > 8000) fail('text must contain 1–8000 characters');
+    if (typeof b.text !== 'string' || !b.text.trim() || new TextEncoder().encode(b.text).length > 32 * 1024) fail('text must contain 1–32768 UTF-8 bytes');
     if (b.mode !== undefined && b.mode !== 'queue' && b.mode !== 'steer') fail('Invalid message mode');
     const id = b.messageId === undefined ? crypto.randomUUID() : uuid(b.messageId);
     return accepted(session.id, await session.dispatch({type:b.mode ?? 'queue', id, text:b.text}), {messageId:id});

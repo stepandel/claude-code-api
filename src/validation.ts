@@ -9,7 +9,11 @@ export function fields(value: unknown, keys: string[]): asserts value is Record<
 const record = (v: unknown): v is Record<string, string> => !!v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(x => typeof x === 'string');
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 100 && v.every(x => typeof x === 'string' && x.length > 0 && x.length <= 200 && !x.includes(',') && !x.startsWith('-') && !/[\x00-\x1f]/.test(x));
 export function config(value: unknown): SessionConfig {
-  fields(value, ['tools', 'allowedTools', 'mcps']);
+  fields(value, ['tools', 'allowedTools', 'mcps', 'model', 'systemPrompt', 'maxTurns']);
+  const {model, systemPrompt, maxTurns} = value;
+  if (model !== undefined && (typeof model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(model))) fail('Invalid model');
+  if (systemPrompt !== undefined && (typeof systemPrompt !== 'string' || !systemPrompt.trim() || new TextEncoder().encode(systemPrompt).length > 32 * 1024)) fail('systemPrompt must contain 1–32768 UTF-8 bytes');
+  if (maxTurns !== undefined && (typeof maxTurns !== 'number' || !Number.isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 100)) fail('maxTurns must be an integer from 1 to 100');
   const tools = value.tools ?? [], allowedTools = value.allowedTools ?? [], mcps = value.mcps ?? {};
   if (!strings(tools) || !strings(allowedTools)) fail('Invalid tool arrays');
   if (!mcps || typeof mcps !== 'object' || Array.isArray(mcps) || Object.keys(mcps).length > 20) fail('Invalid MCP configuration');
@@ -28,7 +32,10 @@ export function config(value: unknown): SessionConfig {
       if (m.headers !== undefined && !record(m.headers)) fail('Invalid MCP headers');
     }
   }
-  return { tools, allowedTools, mcps: mcps as SessionConfig['mcps'] };
+  return { tools, allowedTools, mcps: mcps as SessionConfig['mcps'],
+    ...(model !== undefined ? {model: model as string} : {}),
+    ...(systemPrompt !== undefined ? {systemPrompt: systemPrompt as string} : {}),
+    ...(maxTurns !== undefined ? {maxTurns: maxTurns as number} : {}) };
 }
 export function uuid(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) fail('Invalid UUID');

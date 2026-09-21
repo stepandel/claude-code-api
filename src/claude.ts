@@ -1,5 +1,8 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { SessionConfig } from './contracts.js';
 const exec = promisify(execFile);
 export function claudeEnv(workspace: string): NodeJS.ProcessEnv {
@@ -10,11 +13,14 @@ export function claudeEnv(workspace: string): NodeJS.ProcessEnv {
   env.CLAUDE_CONFIG_DIR = `${workspace}/.claude`;
   return env;
 }
-export function cliArgs(config: SessionConfig, conversationId: string, resume: boolean): string[] {
+export function cliArgs(config: SessionConfig, conversationId: string, resume: boolean, systemPromptPath?: string): string[] {
   return ['-p','--output-format','stream-json','--verbose','--permission-mode','dontAsk',
     '--setting-sources','', '--tools',config.tools.join(','), '--strict-mcp-config',
     '--mcp-config',JSON.stringify({mcpServers:config.mcps}),
     ...(config.allowedTools.length ? ['--allowedTools', config.allowedTools.join(',')] : []),
+    ...(config.model && config.model !== 'default' ? ['--model', config.model] : []),
+    ...(config.maxTurns !== undefined ? ['--max-turns', String(config.maxTurns)] : []),
+    ...(systemPromptPath ? ['--system-prompt-file', systemPromptPath] : []),
     resume ? '--resume' : '--session-id', conversationId];
 }
 export interface Turn {
@@ -33,7 +39,24 @@ export class NativeClaude implements ClaudeRuntime {
   }
   async run(turn: Turn): Promise<void> {
     turn.signal.throwIfAborted();
-    const child = spawn(this.binary,cliArgs(turn.config,turn.conversationId,turn.resume),{
+    // Keep prompt text out of process arguments; unique private files also
+    // isolate simultaneous sessions sharing the user's Workspace.
+    let directory: string | undefined;
+    try {
+      let promptPath: string | undefined;
+      if (turn.config.systemPrompt !== undefined) {
+        directory = await mkdtemp(join(tmpdir(),'cantelop-prompt-'));
+        promptPath = join(directory,'system.txt');
+        await writeFile(promptPath,turn.config.systemPrompt,{mode:0o600});
+      }
+      await this.runNative(turn,promptPath);
+    } finally {
+      if (directory) await rm(directory,{recursive:true,force:true});
+    }
+  }
+  private async runNative(turn: Turn, systemPromptPath?: string): Promise<void> {
+    turn.signal.throwIfAborted();
+    const child = spawn(this.binary,cliArgs(turn.config,turn.conversationId,turn.resume,systemPromptPath),{
       cwd:this.workspace,env:claudeEnv(this.workspace),detached:true,stdio:['pipe','pipe','pipe']
     });
     let exited = false, escalation: ReturnType<typeof setTimeout> | undefined;

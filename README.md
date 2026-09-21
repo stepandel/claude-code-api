@@ -73,6 +73,33 @@ curl "$BASE_URL/v1/sessions" -H "Authorization: Bearer $USER_TOKEN" \
   -d '{"tools":["Read","Glob","Grep"],"allowedTools":["Read","Glob","Grep"],"mcps":{}}'
 ```
 
+Optional session execution settings can be supplied alongside MCP configuration:
+
+```json
+{
+  "model": "sonnet",
+  "systemPrompt": "You operate this canvas using only the supplied Doop tools.",
+  "maxTurns": 24,
+  "tools": [],
+  "allowedTools": ["mcp__doop__*"],
+  "mcps": {
+    "doop": {
+      "type": "http",
+      "url": "https://your-doop.example/local-agent/mcp/RUN_ID",
+      "headers": {"Authorization": "Bearer RUN_SCOPED_TOKEN"}
+    }
+  }
+}
+```
+
+- `model`: optional native model alias or ID, 1–128 ASCII letters, digits, dots, underscores or hyphens, starting with a letter or digit. Omit it or use `default` for Claude's native default. Availability is determined by the user's account and installed Claude version.
+- `systemPrompt`: optional nonblank replacement for Claude's default system prompt, at most 32 KiB in UTF-8. Passed using a private temporary file, removed after the turn, and persisted as part of the Session configuration. It is not appended to the user's message.
+- `maxTurns`: optional integer from 1 to 100, applied to each message, including resumed turns. Omission retains Claude's native default. A turn-limit failure is reported as a failed message, not successful completion.
+
+All configuration is immutable and survives reactivation. Create a fresh Session when changing models, prompts, or run-scoped MCP tokens. Model usage still requires the user's native Claude authentication; these fields do not accept provider credentials.
+
+Message `text` accepts up to 32 KiB of UTF-8. Every POST body remains limited to 48 KiB of encoded JSON, including configuration, MCP headers, and JSON escaping. Larger context must be fetched through MCP or split into separate tasks.
+
 Session creation is asynchronous: observe `session.ready` and `auth.status`. A Session can be configured before native sign-in; each turn rechecks authentication and fails without starting a model call if unauthenticated. Store the returned `sessionId` as `SESSION_ID`.
 
 `tools` selects available built-in tools; it defaults to none. `allowedTools` grants unattended execution for the listed tool names or native rules. Other permissions are denied (`dontAsk`); there is no blanket permission bypass. Custom tools are MCP tools, not JSON function declarations.
