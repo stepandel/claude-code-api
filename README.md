@@ -1,8 +1,8 @@
 # Cantelop Claude Code API
 
-A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.9.1`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
+A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.10.0`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
 
-SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.9.1). Version 0.9.1 was verified against GitHub and npm on September 18, 2026.
+SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.10.0). Version 0.10.0 was verified against GitHub and npm on September 21, 2026. Builds require a Cantelop CLI compatible with SDK build protocol 5 (verified with CLI 0.9.2). The API artifact publishes all 11 application routes for the Cantelop console.
 
 ## Architecture
 
