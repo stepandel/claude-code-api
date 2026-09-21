@@ -4,6 +4,8 @@ import { loginPage } from './login-page.js';
 import { identity } from './auth.js';
 import { ApiError, config, fail, fields, readBody, uuid } from './validation.js';
 
+const AUTH_KEEP_ALIVE_SECONDS = 900;
+
 export default defineApi<Command>(({ app, router, env }) => {
   const route = (method: HttpMethod, path: string, handle: (r: Request) => Promise<Response>) => {
     router.route(method, path, async ({ request }) => {
@@ -19,7 +21,7 @@ export default defineApi<Command>(({ app, router, env }) => {
     if (typeof sessionId !== 'string' || !sessionId.startsWith(`${user.userId}:`)) throw new ApiError(404, 'Session not found');
     const suffix = sessionId.slice(user.userId.length + 1);
     if (suffix !== 'auth') uuid(suffix);
-    return app.sessions.open({id: sessionId, workspaceSlug: user.workspaceSlug, keepAliveSeconds: 300});
+    return app.sessions.open({id: sessionId, workspaceSlug: user.workspaceSlug, keepAliveSeconds: suffix === 'auth' ? AUTH_KEEP_ALIVE_SECONDS : 300});
   };
   const accepted = (sessionId: string, message: {id:string}, extra = {}) => Response.json(
     {sessionId, receiptId: message.id, ...extra}, {status:202, headers:{'cache-control':'no-store'}});
@@ -37,7 +39,7 @@ export default defineApi<Command>(({ app, router, env }) => {
       start={type:'auth.start',attemptId,publicKey:{kty:'EC',crv:'P-256',x:k.x,y:k.y}};
     }
     const workspace = await app.workspaces.open({slug:user.workspaceSlug});
-    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:900});
+    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
     const receipt = await session.dispatch(start);
     return accepted(session.id, receipt, {workspaceId:workspace.id, workspaceSlug:workspace.slug, workspace:'/workspace',
       loginPage:'/login'});
@@ -53,12 +55,12 @@ export default defineApi<Command>(({ app, router, env }) => {
         typeof body.data!=='string'||body.data.length<24||body.data.length>8192||!/^[A-Za-z0-9+/]+={0,2}$/.test(body.data)) fail('Invalid encrypted terminal frame');
       command={type:'auth.input',attemptId,sequence:Number(body.sequence),iv:body.iv,data:body.data};
     }
-    const session=app.sessions.open({id:`${user.userId}:auth`,workspaceSlug:user.workspaceSlug,keepAliveSeconds:300});
+    const session=app.sessions.open({id:`${user.userId}:auth`,workspaceSlug:user.workspaceSlug,keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
     return accepted(session.id,await session.dispatch(command));
   });
   route('POST', '/v1/auth/complete', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);
-    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:300});
+    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
     return accepted(session.id, await session.dispatch({type:'auth.check'}));
   });
   route('POST', '/v1/sessions', async request => {
