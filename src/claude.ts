@@ -28,7 +28,7 @@ export interface Turn {
   emit(event: unknown): Promise<void>;
   initialized(): Promise<void>;
 }
-export interface ClaudeRuntime { authenticated(): Promise<boolean>; run(turn: Turn): Promise<void> }
+export interface ClaudeRuntime { authenticated(): Promise<boolean>; logout(): Promise<void>; run(turn: Turn): Promise<void> }
 export class NativeAuthRequired extends Error {
   constructor() { super('Claude sign-in required'); }
 }
@@ -52,6 +52,12 @@ export class NativeClaude implements ClaudeRuntime {
       if (!failure.killed && !failure.signal && failure.stdout) return authStatus(failure.stdout);
       throw new Error('Claude authentication status unavailable');
     }
+  }
+  async logout(): Promise<void> {
+    try {
+      await exec(this.binary,['auth','logout'],{cwd:this.workspace,env:claudeEnv(this.workspace),timeout:15000,maxBuffer:65536});
+      if (await this.authenticated()) throw new Error('Still authenticated');
+    } catch { throw new Error('Claude sign-out could not be confirmed'); }
   }
   async run(turn: Turn): Promise<void> {
     turn.signal.throwIfAborted();

@@ -5,16 +5,24 @@ import { nativeLogin, type LoginLauncher, type LoginProcess } from './login-proc
 type Context = SessionContext<Command,Event,Reply>;
 const transport = terminalCrypto();
 export class Login {
+  private settled?: Promise<void>;
   private finished?: Extract<Event,{type:'auth.finished'}>;
   private attempt?: {id:string;key:CryptoKey;publicKey:JsonWebKey;peer:string;expiresAt:number;inputSequence:number;outputSequence:number;controller:AbortController;process?:LoginProcess;outcome?:'cancelled'|'expired';inputBytes:number};
-  constructor(private authenticated:()=>Promise<boolean>, private launch:LoginLauncher=nativeLogin(), private timeoutMs=10*60*1000) {}
+  constructor(private authenticated:()=>Promise<boolean>, private launch:LoginLauncher=nativeLogin(), private timeoutMs=10*60*1000, private logout:()=>Promise<void>=async()=>{throw new Error('Logout unavailable');}) {}
   async receive(context:Context):Promise<boolean> {
     const command = context.message.payload;
     if(!command.type.startsWith('auth.')) return false;
     // One deterministic auth actor per user. Agent actors cannot launch a login.
     if(!context.session.id.endsWith(':auth')) {
-      if(command.type==='auth.check') {context.reply({type:'error',code:'auth_session_required'});return true;}
+      if(command.type==='auth.check'||command.type==='auth.logout') {context.reply({type:'error',code:'auth_session_required'});return true;}
       await context.output.send({type:'error',code:'auth_session_required'});return true;
+    }
+    if(command.type==='auth.logout') {
+      if(this.attempt) {this.attempt.outcome='cancelled';this.attempt.controller.abort();}
+      await this.settled;
+      await this.logout();
+      this.finished=undefined;
+      context.reply({type:'auth.status',authenticated:false});return true;
     }
     if(command.type==='auth.check') {
       context.reply({type:'auth.status',authenticated:await this.authenticated()});return true;
@@ -35,7 +43,10 @@ export class Login {
       catch {await context.output.send({type:'auth.error',attemptId:command.attemptId,code:'invalid_public_key'});return true;}
       const current = this.attempt = {id:command.attemptId,key,publicKey:pair.publicKey,peer:JSON.stringify(command.publicKey),
         expiresAt:Date.now()+this.timeoutMs,inputSequence:0,outputSequence:0,controller:new AbortController(),inputBytes:0} as NonNullable<Login['attempt']>;
+      let settled!:()=>void;
+      this.settled=new Promise<void>(resolve=>{settled=resolve;});
       context.activity.start(async activity=>{
+        try {
         const abort=()=>{current.outcome??='cancelled';current.controller.abort();};
         activity.signal.addEventListener('abort',abort,{once:true});
         if(activity.signal.aborted) abort();
@@ -60,6 +71,7 @@ export class Login {
         }
         this.finished={type:'auth.finished',attemptId:current.id,outcome,authenticated};
         if(!activity.signal.aborted) await activity.output.send(this.finished);
+        } finally {settled();}
       },{timeoutMs:this.timeoutMs+30_000});
       return true;
     }

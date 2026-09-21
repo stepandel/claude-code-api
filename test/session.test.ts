@@ -11,6 +11,7 @@ import type { SessionContext, SessionActivityFunction } from '@cantelop/sdk/sess
 class FakeClaude implements ClaudeRuntime {
   signedIn = true;
   runs: {turn:Turn; resolve():void; reject(e:Error):void}[] = [];
+  async logout() { this.signedIn=false; }
   async authenticated() { return this.signedIn; }
   async run(turn: Turn) {
     await turn.initialized();

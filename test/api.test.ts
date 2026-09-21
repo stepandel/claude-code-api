@@ -22,7 +22,7 @@ function fixture(requestError?: Error) {
         request:async (command: Command, options: unknown) => {
           requested.push(command);requestOptions.push(options);
           if(requestError) throw requestError;
-          return command.type === 'auth.check' ? {type:'auth.status',authenticated:true} :
+          return command.type === 'auth.logout' ? {type:'auth.status',authenticated:false} : command.type === 'auth.check' ? {type:'auth.status',authenticated:true} :
             {type:'session.state',configured:true,messages:[],truncated:false};
         },
         events:async (request: Request) => new Response(request.headers.get('Last-Event-ID'),{headers:{'content-type':'text/event-stream'}})};
@@ -182,4 +182,14 @@ test('request timeout remains a no-store gateway timeout without exposing intern
   assert.equal(response.status,504);
   assert.deepEqual(await response.json(),{error:'Operation failed',code:'request_wait_timeout'});
   assert.equal(response.headers.get('cache-control'),'no-store');
+});
+
+test('logout uses caller auth session and waits for native sign-out', async()=>{
+  const f=fixture();
+  const response=await f.request('/v1/auth/logout',{});
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).authenticated,false);
+  assert.deepEqual(f.requested,[{type:'auth.logout'}]);
+  assert.match(f.opened[0].id,/:auth$/);
+  assert.equal((await f.request('/v1/auth/logout',{sessionId:'other:auth'})).status,400);
 });

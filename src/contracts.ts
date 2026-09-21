@@ -10,7 +10,7 @@ export interface SessionConfig {
   mcps: Record<string, McpServer>;
 }
 export type Command =
-  | { type: 'auth.check' | 'snapshot' | 'drain' }
+  | { type: 'auth.check' | 'auth.logout' | 'snapshot' | 'drain' }
   | { type: 'auth.start'; attemptId: string; publicKey: JsonWebKey; force?: boolean }
   | { type: 'auth.input'; attemptId: string; sequence: number; iv: string; data: string }
   | { type: 'auth.cancel'; attemptId: string }

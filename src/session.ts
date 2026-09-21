@@ -7,7 +7,7 @@ import type { Command, Event, Message, Status, Reply } from './contracts.js';
 type Context = SessionContext<Command,Event,Reply>;
 
 export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), workspace = '/workspace') {
-  const login = new Login(() => runtime.authenticated());
+  const login = new Login(() => runtime.authenticated(), undefined, undefined, () => runtime.logout());
   let state: State | undefined, store: StateStore | undefined;
   let active: {message: Message; controller: AbortController; outcome?: Status} | undefined;
   const save = () => store!.save(state!);

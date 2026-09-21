@@ -109,3 +109,23 @@ test('status command failures are unavailable, not signed-out', async t => {
   await writeFile(binary,'#!/usr/bin/env node\nconsole.log(JSON.stringify({loggedIn:false}));process.exit(1);',{mode:0o755});
   assert.equal(await new NativeClaude(root,binary).authenticated(),false);
 });
+
+test('native logout uses the workspace credentials and verifies signed-out status',async t=>{
+  const root=await mkdtemp(join(tmpdir(),'cantelop-logout-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const binary=join(root,'claude');
+  await writeFile(binary,`#!/usr/bin/env node
+const fs=require('node:fs');
+if(require('node:path').join(fs.realpathSync(require('node:path').dirname(process.env.CLAUDE_CONFIG_DIR)),'.claude')!==process.cwd()+'/.claude') process.exit(2);
+if(process.argv.slice(2).join(' ')==='auth logout') {fs.writeFileSync('signed-out','');process.exit(0);}
+console.log(JSON.stringify({loggedIn:!fs.existsSync('signed-out')}));
+`,{mode:0o755});
+  const runtime=new NativeClaude(root,binary);
+  assert.equal(await runtime.authenticated(),true);
+  await runtime.logout();assert.equal(await runtime.authenticated(),false);
+  await runtime.logout();
+});
+test('logout refuses to report success if credentials remain active',async t=>{
+  const runtime=await fixture(t);
+  await assert.rejects(runtime.logout(),/sign-out could not be confirmed/);
+});

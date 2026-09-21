@@ -18,15 +18,16 @@ async function fixture(timeout=1000) {
     signal.addEventListener('abort',()=>resolve(1),{once:true});if(signal.aborted)resolve(1);
     return {done,write:async text=>{written.push(text);},stop:()=>resolve(1)};
   };
-  const login=new Login(async()=>signedIn,launch,timeout);
+  const replies:Reply[]=[];
+  const login=new Login(async()=>signedIn,launch,timeout,async()=>{signedIn=false;});
   const activity={get active(){return active;},start(work:SessionActivityFunction<Command,Event>){
     assert.equal(active,false);active=true;task=Promise.resolve().then(()=>work({signal:new AbortController().signal,output,send:()=>{}})).then(()=>{active=false;});
   },cancel:()=>false,extend:()=>{}};
-  const dispatch=(payload:Command,id='tenant:auth')=>login.receive({session:{id,workspaceSlug:'tenant',keepAliveSeconds:300},env:{},message:{id:crypto.randomUUID(),sequence:1,payload},output,activity,reply:()=>{throw new Error('unexpected reply');},send:()=>{},signal:new AbortController().signal} as SessionContext<Command,Event,Reply>);
+  const dispatch=(payload:Command,id='tenant:auth')=>login.receive({session:{id,workspaceSlug:'tenant',keepAliveSeconds:300},env:{},message:{id:crypto.randomUUID(),sequence:1,payload},output,activity,reply:(value:Reply)=>{replies.push(value);},send:()=>{},signal:new AbortController().signal} as SessionContext<Command,Event,Reply>);
   await dispatch({type:'auth.start',attemptId,publicKey:browser.publicKey});await until(()=>launches===1);
   const started=events.find(e=>e.type==='auth.started');assert.ok(started?.type==='auth.started');
   const key=await cryptoBox.derive(browser.privateKey,started.publicKey);
-  return {dispatch,attemptId,browser,events,written,key,get launches(){return launches;},output:async(text:string)=>nativeOutput(text),
+  return {dispatch,attemptId,browser,events,written,key,replies,get launches(){return launches;},output:async(text:string)=>nativeOutput(text),
     finish:async()=>{signedIn=true;resolve(0);await task;},stop:async()=>{await dispatch({type:'auth.cancel',attemptId});await task;},wait:()=>task};
 }
 test('native terminal traffic is encrypted; input is ordered and retry-safe',async()=>{
@@ -88,4 +89,19 @@ test('auth status uses one direct reply and does not emit an event or start inte
       activity:{active:false,start:()=>{throw new Error('must not start an activity');},cancel:()=>false,extend:()=>{}}});
     assert.deepEqual(replies,[{type:'auth.status',authenticated}]);
   }
+});
+
+test('logout cancels pending login and requires a new native login',async()=>{
+  const f=await fixture();
+  await f.dispatch({type:'auth.logout'});await f.wait();
+  assert.deepEqual(f.replies,[{type:'auth.status',authenticated:false}]);
+  assert.ok(f.events.some(e=>e.type==='auth.finished'&&e.outcome==='cancelled'));
+  await f.dispatch({type:'auth.start',attemptId:crypto.randomUUID(),publicKey:f.browser.publicKey});
+  await until(()=>f.launches===2);await f.dispatch({type:'auth.logout'});await f.wait();
+});
+test('logout clears completed login replay and saved authentication',async()=>{
+  const f=await fixture();await f.finish();
+  await f.dispatch({type:'auth.logout'});
+  await f.dispatch({type:'auth.start',attemptId:f.attemptId,publicKey:f.browser.publicKey});
+  await until(()=>f.launches===2);await f.stop();
 });

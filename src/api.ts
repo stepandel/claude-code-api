@@ -68,6 +68,11 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
     const session=app.sessions.open({id:`${user.userId}:auth`,workspaceSlug:user.workspaceSlug,keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
     return accepted(session.id,await session.dispatch(command));
   });
+  route('POST', '/v1/auth/logout', async request => {
+    const user = await identity(request, env); fields(await readBody(request), []);
+    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
+    return result(session.id, await session.request({type:'auth.logout'},{timeoutMs:45_000,signal:request.signal}));
+  });
   route('POST', '/v1/auth/complete', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);
     const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});

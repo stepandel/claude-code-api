@@ -220,3 +220,7 @@ login even when stale saved credentials still report signed in. Verify the
 matching `auth.finished` event reports `authenticated: true` and
 `outcome: succeeded` before clearing the pause. Interrupted work must not be
 replayed automatically because earlier tool actions may already have completed.
+
+### Signing out
+
+`POST /v1/auth/logout` with `{}` runs native `claude auth logout` in the caller’s auth Session and verifies `claude auth status` reports signed out. It cancels and awaits any interactive login first, clears cached login completion, and returns HTTP 200 with `{sessionId, type: "auth.status", authenticated: false}` only after confirmation. Stop the caller’s agent tasks before signing out. No workspace files or conversations are deleted. The request waits up to 45 seconds; a timeout does not confirm sign-out and can be retried.
