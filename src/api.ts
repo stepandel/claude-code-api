@@ -1,16 +1,20 @@
-import { defineApi, type HttpMethod } from '@cantelop/sdk/api';
-import type { Command } from './contracts.js';
+import { defineApi, RemoteAppError, type HttpMethod } from '@cantelop/sdk/api';
+import type { Command, Reply } from './contracts.js';
 import { loginPage } from './login-page.js';
 import { identity } from './auth.js';
 import { ApiError, config, fail, fields, readBody, uuid } from './validation.js';
 
 const AUTH_KEEP_ALIVE_SECONDS = 900;
 
-export default defineApi<Command>(({ app, router, env }) => {
+export default defineApi<Command, Reply>(({ app, router, env }) => {
   const route = (method: HttpMethod, path: string, handle: (r: Request) => Promise<Response>) => {
     router.route(method, path, async ({ request }) => {
       try { return await handle(request); }
       catch (error) {
+        if (error instanceof RemoteAppError) {
+          return Response.json({error:'Operation failed',code:error.code},
+            {status:error.status >= 400 && error.status <= 599 ? error.status : 502,headers:{'cache-control':'no-store'}});
+        }
         return Response.json({error: error instanceof ApiError ? error.message : 'Operation failed'},
           {status: error instanceof ApiError ? error.status : 500, headers:{'cache-control':'no-store'}});
       }
@@ -25,6 +29,8 @@ export default defineApi<Command>(({ app, router, env }) => {
   };
   const accepted = (sessionId: string, message: {id:string}, extra = {}) => Response.json(
     {sessionId, receiptId: message.id, ...extra}, {status:202, headers:{'cache-control':'no-store'}});
+  const result = (sessionId: string, reply: Reply, extra = {}) => Response.json(
+    {sessionId,...reply,...extra}, {headers:{'cache-control':'no-store'}});
   route('GET', '/login', async () => loginPage());
   route('GET', '/health', async () => Response.json({ok:true}));
   route('POST', '/v1/auth', async request => {
@@ -42,9 +48,11 @@ export default defineApi<Command>(({ app, router, env }) => {
     }
     const workspace = await app.workspaces.open({slug:user.workspaceSlug});
     const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
-    const receipt = await session.dispatch(start);
-    return accepted(session.id, receipt, {workspaceId:workspace.id, workspaceSlug:workspace.slug, workspace:'/workspace',
-      loginPage:'/login'});
+    const metadata = {workspaceId:workspace.id, workspaceSlug:workspace.slug, workspace:'/workspace',loginPage:'/login'};
+    if (start.type === 'auth.check') {
+      return result(session.id, await session.request(start,{timeoutMs:30_000,signal:request.signal}),metadata);
+    }
+    return accepted(session.id, await session.dispatch(start), metadata);
   });
   for(const action of ['input','cancel'] as const) route('POST', `/v1/auth/${action}`, async request=>{
     const user=await identity(request,env), body=await readBody(request);
@@ -63,7 +71,7 @@ export default defineApi<Command>(({ app, router, env }) => {
   route('POST', '/v1/auth/complete', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);
     const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
-    return accepted(session.id, await session.dispatch({type:'auth.check'}));
+    return result(session.id, await session.request({type:'auth.check'},{timeoutMs:30_000,signal:request.signal}));
   });
   route('POST', '/v1/sessions', async request => {
     const user = await identity(request, env), settings = config(await readBody(request));
@@ -86,7 +94,7 @@ export default defineApi<Command>(({ app, router, env }) => {
   route('POST', '/v1/snapshot', async request => {
     const b = await readBody(request); fields(b,['sessionId']);
     const session = await userSession(request,b.sessionId);
-    return accepted(session.id, await session.dispatch({type:'snapshot'}));
+    return result(session.id, await session.request({type:'snapshot'},{timeoutMs:30_000,signal:request.signal}));
   });
   route('GET', '/v1/events', async request => {
     const session = await userSession(request,new URL(request.url).searchParams.get('sessionId'));

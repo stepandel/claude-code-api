@@ -19,6 +19,7 @@ export type Command =
   | { type: 'cancel'; id: string };
 export type Status = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'steered' | 'interrupted';
 export interface Message { id: string; text: string; status: Status }
+export type Reply = Extract<Event, {type:'auth.status' | 'session.state' | 'error'}>;
 export type Event =
   | { type: 'auth.started'; attemptId: string; publicKey: JsonWebKey; expiresAt: number }
   | { type: 'auth.output'; attemptId: string; terminalSequence: number; iv: string; data: string }

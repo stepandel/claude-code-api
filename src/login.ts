@@ -1,8 +1,8 @@
 import type { SessionContext } from '@cantelop/sdk/session';
-import type { Command, Event } from './contracts.js';
+import type { Command, Event, Reply } from './contracts.js';
 import { terminalCrypto } from './terminal-crypto.js';
 import { nativeLogin, type LoginLauncher, type LoginProcess } from './login-process.js';
-type Context = SessionContext<Command,Event>;
+type Context = SessionContext<Command,Event,Reply>;
 const transport = terminalCrypto();
 export class Login {
   private finished?: Extract<Event,{type:'auth.finished'}>;
@@ -13,10 +13,11 @@ export class Login {
     if(!command.type.startsWith('auth.')) return false;
     // One deterministic auth actor per user. Agent actors cannot launch a login.
     if(!context.session.id.endsWith(':auth')) {
+      if(command.type==='auth.check') {context.reply({type:'error',code:'auth_session_required'});return true;}
       await context.output.send({type:'error',code:'auth_session_required'});return true;
     }
     if(command.type==='auth.check') {
-      await context.output.send({type:'auth.status',authenticated:await this.authenticated()});return true;
+      context.reply({type:'auth.status',authenticated:await this.authenticated()});return true;
     }
     if(command.type==='auth.start') {
       if(this.finished?.attemptId===command.attemptId) {await context.output.send(this.finished);return true;}

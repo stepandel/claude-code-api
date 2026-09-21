@@ -56,12 +56,12 @@ Use an ES256 JWT issued by your application authentication system as `USER_TOKEN
 
 For interactive subscription login, use `/login`. Programmatic clients can implement the same terminal protocol:
 
-1. `POST /v1/auth` with `{}` allocates the user's Workspace and returns the auth `sessionId`, Workspace identifiers, and `/login` URL. It dispatches a native authentication check.
+1. `POST /v1/auth` with `{}` allocates the user's Workspace and returns HTTP 200 with the auth `sessionId`, Workspace identifiers, `/login` URL, `type: "auth.status"`, and `authenticated: boolean` from the native authentication check. No event subscription is needed for this check.
 2. Subscribe to `/v1/events?sessionId=...` **before** starting the terminal.
 3. Generate a temporary ECDH P-256 key pair. `POST /v1/auth` with `{ "attemptId": "<UUID>", "publicKey": <public JWK> }` starts login. Private JWK fields are rejected.
 4. `auth.started` returns the Session's public JWK and `expiresAt`. Derive the AES-GCM key using `src/terminal-crypto.ts`. Encrypted `auth.output` events carry `terminalSequence`, `iv`, and `data`. Decrypt with additional authenticated data `<attemptId>:output:<terminalSequence>`.
 5. Send encrypted terminal bytes to `POST /v1/auth/input` as `{attemptId, sequence, iv, data}`. Input sequence starts at 1; AAD is `<attemptId>:input:<sequence>`. IV is 12 random bytes; IV and ciphertext use standard base64. Input is limited to 4 KiB per frame and 32 KiB per attempt. Duplicate accepted sequences are ignored; gaps are rejected. No plaintext code field is accepted.
-6. `POST /v1/auth/cancel` with `{attemptId}` stops an attempt. `auth.finished` reports the outcome and native authentication status. Repeating `/v1/auth/complete` with `{}` provides a separate status check.
+6. `POST /v1/auth/cancel` with `{attemptId}` stops an attempt. `auth.finished` reports the outcome and native authentication status. `POST /v1/auth/complete` with `{}` returns HTTP 200 with `{sessionId, type: "auth.status", authenticated}` directly.
 
 The server derives the auth Session from the caller's JWT; clients cannot select a different user's terminal. The browser implementation in `src/login-page.ts` demonstrates the complete flow, including subscribing before dispatch and handling encrypted event replay.
 
@@ -155,7 +155,7 @@ curl "$BASE_URL/v1/snapshot" -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' -d "{\"sessionId\":\"$SESSION_ID\"}"
 ```
 
-The `session.state` event contains the latest 50 messages with prompt previews capped at 256 characters, plus a `truncated` flag. It is a summary, not a full transcript API.
+The HTTP 200 response contains `{sessionId, type: "session.state", configured, messages, truncated}` directly, with the latest 50 messages and prompt previews capped at 256 characters. It is a summary, not a full transcript API. Sandbox recovery still emits a `session.state` event.
 
 | Method | Route | Behaviour |
 | --- | --- | --- |
@@ -164,14 +164,16 @@ The `session.state` event contains the latest 50 messages with prompt previews c
 | POST | `/v1/auth` | Allocate Workspace, check auth, or start encrypted native login |
 | POST | `/v1/auth/input` | Send encrypted input to the caller’s login terminal |
 | POST | `/v1/auth/cancel` | Cancel the caller’s active login attempt |
-| POST | `/v1/auth/complete` | Dispatch native authentication check |
+| POST | `/v1/auth/complete` | Return native authentication status directly |
 | POST | `/v1/sessions` | Create and configure a Session |
 | POST | `/v1/messages` | Queue or steer a message |
 | POST | `/v1/cancel` | Cancel a queued or active message |
-| POST | `/v1/snapshot` | Publish persisted Session summary |
+| POST | `/v1/snapshot` | Return persisted Session summary directly |
 | GET | `/v1/events?sessionId=...` | SDK SSE/WebSocket stream |
 
-All API routes except health require an application JWT; the static login page is public. Workspace selection is derived from verified identity; clients cannot select another user's Workspace. Session ownership is checked before dispatch and event subscription. POST responses report acceptance (202); outcomes arrive as events.
+All API routes except health require an application JWT; the static login page is public. Workspace selection is derived from verified identity; clients cannot select another user's Workspace. Session ownership is checked before dispatch, requests, and event subscription.
+
+With SDK 0.11.0, auth checks and snapshots use `session.request()` and return HTTP 200 with the result instead of a 202 receipt. Clients must read these response bodies instead of waiting for status/snapshot events. Requests wait up to 30 seconds; timeout returns HTTP 504 with `code: "request_wait_timeout"`. A timeout or disconnect stops waiting, not execution; these read-only checks can be repeated. Interactive login start/input/cancel, Session configuration, and model queue/steer/cancel remain asynchronous (202), with outcomes delivered as events. Use a deployed platform for request/reply verification; CLI 0.10.0's local development bridge does not support the request endpoint.
 
 ## Queue, cancellation, and durability
 

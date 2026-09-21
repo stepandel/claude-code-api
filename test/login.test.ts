@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Login } from '../src/login.js';
 import { terminalCrypto } from '../src/terminal-crypto.js';
 import type { LoginLauncher } from '../src/login-process.js';
-import type { Command, Event } from '../src/contracts.js';
+import type { Command, Event, Reply } from '../src/contracts.js';
 import type { SessionContext,SessionActivityFunction } from '@cantelop/sdk/session';
 const cryptoBox=terminalCrypto();
 const until=async(predicate:()=>boolean)=>{const end=Date.now()+2000;while(!predicate()){if(Date.now()>end)throw new Error('Timeout');await new Promise(r=>setTimeout(r,5));}};
@@ -22,7 +22,7 @@ async function fixture(timeout=1000) {
   const activity={get active(){return active;},start(work:SessionActivityFunction<Command,Event>){
     assert.equal(active,false);active=true;task=Promise.resolve().then(()=>work({signal:new AbortController().signal,output,send:()=>{}})).then(()=>{active=false;});
   },cancel:()=>false,extend:()=>{}};
-  const dispatch=(payload:Command,id='tenant:auth')=>login.receive({session:{id,workspaceSlug:'tenant',keepAliveSeconds:300},env:{},message:{id:crypto.randomUUID(),sequence:1,payload},output,activity,send:()=>{},signal:new AbortController().signal} as SessionContext<Command,Event>);
+  const dispatch=(payload:Command,id='tenant:auth')=>login.receive({session:{id,workspaceSlug:'tenant',keepAliveSeconds:300},env:{},message:{id:crypto.randomUUID(),sequence:1,payload},output,activity,reply:()=>{throw new Error('unexpected reply');},send:()=>{},signal:new AbortController().signal} as SessionContext<Command,Event,Reply>);
   await dispatch({type:'auth.start',attemptId,publicKey:browser.publicKey});await until(()=>launches===1);
   const started=events.find(e=>e.type==='auth.started');assert.ok(started?.type==='auth.started');
   const key=await cryptoBox.derive(browser.privateKey,started.publicKey);
@@ -75,4 +75,17 @@ test('forced reconnect opens the native login even when saved credentials appear
   await f.dispatch({type:'auth.start',attemptId:next,publicKey:f.browser.publicKey,force:true});
   await until(()=>f.launches===2);
   await f.dispatch({type:'auth.cancel',attemptId:next}); await f.wait();
+});
+
+test('auth status uses one direct reply and does not emit an event or start interactive login',async()=>{
+  for(const authenticated of [false,true]) {
+    const replies:Reply[]=[];
+    const login=new Login(async()=>authenticated,()=>{throw new Error('must not launch login');});
+    await login.receive({session:{id:'tenant:auth',workspaceSlug:'tenant',keepAliveSeconds:900},env:{},
+      message:{id:crypto.randomUUID(),sequence:1,payload:{type:'auth.check'}},
+      signal:new AbortController().signal,reply:value=>{replies.push(value);},send:()=>{},
+      output:{send:async()=>{throw new Error('status must not be streamed');}},
+      activity:{active:false,start:()=>{throw new Error('must not start an activity');},cancel:()=>false,extend:()=>{}}});
+    assert.deepEqual(replies,[{type:'auth.status',authenticated}]);
+  }
 });

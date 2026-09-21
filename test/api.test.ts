@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import api from '../src/api.js';
-import type { CantelopApp } from '@cantelop/sdk/api';
-import type { Command } from '../src/contracts.js';
+import { RemoteAppError, type CantelopApp } from '@cantelop/sdk/api';
+import type { Command, Reply } from '../src/contracts.js';
 const pair = generateKeyPairSync('ec',{namedCurve:'P-256'});
 const env = {AUTH_PUBLIC_JWK:JSON.stringify(pair.publicKey.export({format:'jwk'})),AUTH_ISSUER:'test',AUTH_AUDIENCE:'api'};
 function token(sub = 'alice', extra = {}, key = pair.privateKey) {
@@ -11,29 +11,39 @@ function token(sub = 'alice', extra = {}, key = pair.privateKey) {
   const input = `${encode({alg:'ES256'})}.${encode({sub,iss:'test',aud:'api',exp:Math.floor(Date.now()/1000)+300,...extra})}`;
   return `${input}.${sign('sha256',Buffer.from(input),{key,dsaEncoding:'ieee-p1363'}).toString('base64url')}`;
 }
-function fixture() {
+function fixture(requestError?: Error) {
   const opened: any[] = [], workspaces: any[] = [], dispatched: Command[] = [];
+  const requested: Command[] = [], requestOptions: any[] = [];
   const app = {
     workspaces:{open:async (input: any) => {workspaces.push(input); return {id:'ws-1',slug:input.slug};}},
     sessions:{open:(input: any) => {
       opened.push(input);
       return {...input,dispatch:async (command: Command) => {dispatched.push(command);return {id:'receipt'};},
+        request:async (command: Command, options: unknown) => {
+          requested.push(command);requestOptions.push(options);
+          if(requestError) throw requestError;
+          return command.type === 'auth.check' ? {type:'auth.status',authenticated:true} :
+            {type:'session.state',configured:true,messages:[],truncated:false};
+        },
         events:async (request: Request) => new Response(request.headers.get('Last-Event-ID'),{headers:{'content-type':'text/event-stream'}})};
     }}
-  } as unknown as CantelopApp<Command>;
+  } as unknown as CantelopApp<Command, Reply>;
   const router = api.create({app,env});
   const request = async (path: string, body?: unknown, auth = token(), headers = {}) => router.handle(new Request(`https://app.example${path}`,{
     method:body === undefined ? 'GET' : 'POST',headers:{authorization:`Bearer ${auth}`,...headers},
     ...(body === undefined ? {} : {body:JSON.stringify(body)})}));
-  return {request,opened,workspaces,dispatched};
+  return {request,opened,workspaces,dispatched,requested,requestOptions};
 }
 test('SDK allocates server-selected user Workspace and native-auth Session; repeat provisioning is stable', async () => {
   const f = fixture();
-  const first = await f.request('/v1/auth',{}); assert.equal(first.status,202);
+  const first = await f.request('/v1/auth',{}); assert.equal(first.status,200);
   const a = await first.json();
   assert.match(a.workspaceSlug,/^u-[a-f0-9]{48}$/);
   assert.equal(a.sessionId,`${a.workspaceSlug.slice(2)}:auth`);
-  assert.deepEqual(f.dispatched,[{type:'auth.check'}]);
+  assert.deepEqual(f.requested,[{type:'auth.check'}]);
+  assert.equal(a.authenticated,true);
+  assert.equal(a.receiptId,undefined);
+  assert.equal(first.headers.get('cache-control'),'no-store');
   assert.equal((await (await f.request('/v1/auth',{})).json()).sessionId,a.sessionId);
   assert.notEqual((await (await f.request('/v1/auth',{},token('bob'))).json()).workspaceSlug,a.workspaceSlug);
 });
@@ -64,7 +74,8 @@ test('queue, steer, cancel, auth checks and per-session MCP configurations dispa
   await f.request('/v1/messages',{sessionId,text:'change direction',mode:'steer'});
   await f.request('/v1/cancel',{sessionId,messageId:sent.messageId});
   await f.request('/v1/auth/complete',{});
-  assert.deepEqual(f.dispatched.map(m => m.type),['configure','queue','steer','cancel','auth.check']);
+  assert.deepEqual(f.dispatched.map(m => m.type),['configure','queue','steer','cancel']);
+  assert.deepEqual(f.requested,[{type:'auth.check'}]);
 });
 test('reject credentials, invalid MCPs and oversized requests', async () => {
   const f = fixture();
@@ -143,4 +154,32 @@ test('forced native re-login requires a valid terminal handshake', async () => {
   assert.equal((await f.request('/v1/auth',{attemptId,publicKey,force:'yes'})).status,400);
   assert.equal((await f.request('/v1/auth',{attemptId,publicKey,force:true})).status,202);
   assert.equal((f.dispatched.at(-1) as {force?:boolean}).force,true);
+});
+
+test('status and snapshots return bounded replies without dispatch or an event subscription', async () => {
+  const f=fixture();
+  const sessionId=(await (await f.request('/v1/sessions',{})).json()).sessionId;
+  const status=await f.request('/v1/auth/complete',{});
+  assert.equal(status.status,200);
+  assert.equal((await status.json()).authenticated,true);
+  const snapshot=await f.request('/v1/snapshot',{sessionId});
+  assert.equal(snapshot.status,200);
+  assert.deepEqual(await snapshot.json(),{sessionId,type:'session.state',configured:true,messages:[],truncated:false});
+  assert.equal(snapshot.headers.get('cache-control'),'no-store');
+  assert.deepEqual(f.requested.map(c=>c.type),['auth.check','snapshot']);
+  assert.deepEqual(f.dispatched.map(c=>c.type),['configure']);
+  for(const options of f.requestOptions) {
+    assert.equal(options.timeoutMs,30_000);
+    assert.ok(options.signal instanceof AbortSignal);
+  }
+  assert.equal((await f.request('/v1/snapshot',{sessionId},token('bob'))).status,404);
+  assert.equal(f.requested.length,2);
+});
+
+test('request timeout remains a no-store gateway timeout without exposing internal error text',async()=>{
+  const f=fixture(new RemoteAppError('request_wait_timeout',504));
+  const response=await f.request('/v1/auth/complete',{});
+  assert.equal(response.status,504);
+  assert.deepEqual(await response.json(),{error:'Operation failed',code:'request_wait_timeout'});
+  assert.equal(response.headers.get('cache-control'),'no-store');
 });

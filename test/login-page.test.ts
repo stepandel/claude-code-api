@@ -40,6 +40,15 @@ test('compiled login page completes encrypted native terminal flow with app bear
     return {done,stop:()=>finish(1),write:async data=>{written.push(data);authenticated=true;finish(0);}};
   });
   const app:any={workspaces:{open:async({slug}:any)=>({id:'ws',slug})},sessions:{open:(options:any)=>({...options,
+    request:async(payload:Command)=>{
+      let reply:unknown;
+      commands.push(payload);
+      await login.receive({session:options,env:{},message:{id:crypto.randomUUID(),sequence:1,payload},output,
+        reply:value=>{reply=value;},signal:new AbortController().signal,send:()=>{},
+        activity:{active:false,start:()=>{throw new Error('status must not start login');},cancel:()=>false,extend:()=>{}}});
+      assert.deepEqual(reply,{type:'auth.status',authenticated:false});
+      return reply;
+    },
     dispatch:async(payload:Command)=>{commands.push(payload);await login.receive({session:options,env:{},message:{id:crypto.randomUUID(),sequence:1,payload},output,signal:new AbortController().signal,send:()=>{},activity:{get active(){return active;},start:work=>{active=true;void Promise.resolve().then(()=>work({signal:new AbortController().signal,output,send:()=>{}})).finally(()=>{active=false;});},cancel:()=>false,extend:()=>{}}});return{id:'receipt'};},
     events:async(request:Request)=>{eventRequests.push(request);return new Response(new ReadableStream({start(controller){stream=controller;},cancel(){stream=undefined;}}),{headers:{'content-type':'text/event-stream'}});}
   })}};

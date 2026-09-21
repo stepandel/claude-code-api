@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { NativeAuthRequired, NativeClaude, type ClaudeRuntime } from './claude.js';
 import { Login } from './login.js';
 import { StateStore, type State } from './state.js';
-import type { Command, Event, Message, Status } from './contracts.js';
-type Context = SessionContext<Command,Event>;
+import type { Command, Event, Message, Status, Reply } from './contracts.js';
+type Context = SessionContext<Command,Event,Reply>;
 
 export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), workspace = '/workspace') {
   const login = new Login(() => runtime.authenticated());
@@ -20,9 +20,9 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
     await save();
   }
   const status = (output: SessionOutput<Event>, message: Message) => output.send({type:'message.status',id:message.id,status:message.status});
-  async function snapshot(output: SessionOutput<Event>) {
+  function snapshot(): Extract<Reply,{type:'session.state'}> {
     const messages = state!.messages.slice(-50).map(m => ({...m,text:m.text.slice(0,256)}));
-    await output.send({type:'session.state',configured:!!state!.config,messages,truncated:state!.messages.length > 50 || state!.messages.some(m => m.text.length > 256)});
+    return {type:'session.state',configured:!!state!.config,messages,truncated:state!.messages.length > 50 || state!.messages.some(m => m.text.length > 256)};
   }
   async function start(context: Context) {
     if (context.activity.active || !state!.queue.length || !state!.config) return;
@@ -64,15 +64,16 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
       if (!activity.signal.aborted) await status(activity.output,message);
     });
   }
-  return defineSessionBehaviour<Command,Event>({
+  return defineSessionBehaviour<Command,Event,Reply>({
     async receive(context) {
       await initialize(context.session.id);
       const command = context.message.payload;
       if (await login.receive(context)) return;
       if (context.session.id.endsWith(':auth')) {
+        if (command.type === 'snapshot') {context.reply({type:'error',code:'agent_session_required'});return;}
         await context.output.send({type:'error',code:'agent_session_required'}); return;
       }
-      if (command.type === 'snapshot') { await snapshot(context.output); return; }
+      if (command.type === 'snapshot') { context.reply(snapshot()); return; }
       if (command.type === 'configure') {
         if (state!.config) { await context.output.send({type:'error',code:'already_configured'}); return; }
         state!.config = command.config; await save();
@@ -109,7 +110,7 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
     async onRecover(context) {
       await initialize(context.session.id);
       if (context.session.id.endsWith(':auth')) { await context.output.send({type:'auth.reset'}); return; }
-      await snapshot(context.output);
+      await context.output.send(snapshot());
       // The interrupted turn stays interrupted. Queued, not-yet-started work resumes.
       context.send({type:'drain'});
     }

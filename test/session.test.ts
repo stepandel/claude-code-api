@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createBehaviour } from '../src/session.js';
 import { StateStore } from '../src/state.js';
 import { NativeAuthRequired, type ClaudeRuntime, type Turn } from '../src/claude.js';
-import type { Command, Event } from '../src/contracts.js';
+import type { Command, Event, Reply } from '../src/contracts.js';
 import type { SessionContext, SessionActivityFunction } from '@cantelop/sdk/session';
 class FakeClaude implements ClaudeRuntime {
   signedIn = true;
@@ -27,13 +27,14 @@ async function until(predicate: () => boolean) {
 }
 function harness(runtime: FakeClaude, root: string) {
   const behaviour = createBehaviour(runtime,root), events: Event[] = [];
+  const replies: Reply[] = [];
   let activityActive = false, activityTask = Promise.resolve(), mailbox = Promise.resolve();
   const output = {send:async (event: Event) => {events.push(event);}};
   const send = (command: Command) => {
     mailbox = mailbox.then(() => behaviour.receive({signal:new AbortController().signal,
       session:{id:'session-a',workspaceSlug:'user',keepAliveSeconds:300},env:{},
-      message:{id:crypto.randomUUID(),sequence:1,payload:command},output,send:command => {void send(command);},activity
-    } satisfies SessionContext<Command,Event>));
+      message:{id:crypto.randomUUID(),sequence:1,payload:command},output,reply:value=>{replies.push(value);},send:command => {void send(command);},activity
+    } satisfies SessionContext<Command,Event,Reply>));
     return mailbox;
   };
   const activity = {
@@ -46,7 +47,7 @@ function harness(runtime: FakeClaude, root: string) {
       });
     },cancel:() => false,extend:() => {}
   };
-  return {send,events,behaviour,idle:async () => {await until(() => !activityActive);await activityTask;await mailbox;}};
+  return {send,events,replies,behaviour,idle:async () => {await until(() => !activityActive);await activityTask;await mailbox;}};
 }
 async function fixture(t: any) {
   const root = await mkdtemp(join(tmpdir(),'cantelop-test-'));t.after(() => rm(root,{recursive:true,force:true}));
@@ -79,7 +80,7 @@ test('durable configuration survives reactivation; interrupted work is not repla
   const store = new StateStore(root,'session-a'), state = await store.load();
   state.resume = true;state.messages.push({id:'old',text:'possibly ran tools',status:'running'});await store.save(state);
   const replacement = harness(runtime,root);await replacement.send({type:'snapshot'});
-  const snapshot = replacement.events.find(e=>e.type==='session.state');
+  const snapshot = replacement.replies.find(e=>e.type==='session.state');
   assert.ok(snapshot?.type==='session.state');assert.equal(snapshot.messages[0]?.status,'interrupted');
   assert.equal(runtime.runs.length,0);
   await replacement.send({type:'queue',id:'new',text:'next'});await until(()=>runtime.runs.length===1);
@@ -92,7 +93,7 @@ test('unauthenticated native runtime fails turn without starting Claude',async t
   const {runtime,h} = await fixture(t);runtime.signedIn = false;
   await h.send({type:'auth.check'});await h.send({type:'queue',id:'a',text:'a'});await h.idle();
   assert.equal(runtime.runs.length,0);
-  assert.ok(h.events.some(e=>e.type==='error'&&e.code==='auth_session_required'));
+  assert.ok(h.replies.some(e=>e.type==='error'&&e.code==='auth_session_required'));
   assert.ok(h.events.some(e=>e.type==='message.status'&&e.status==='failed'));
 });
 test('large Claude events are fragmented within SDK output size limit',async t => {
