@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBehaviour } from '../src/session.js';
 import { StateStore } from '../src/state.js';
-import type { ClaudeRuntime, Turn } from '../src/claude.js';
+import { NativeAuthRequired, type ClaudeRuntime, type Turn } from '../src/claude.js';
 import type { Command, Event } from '../src/contracts.js';
 import type { SessionContext, SessionActivityFunction } from '@cantelop/sdk/session';
 class FakeClaude implements ClaudeRuntime {
@@ -127,4 +127,15 @@ test('auth Sandbox recovery requests a fresh handshake instead of replaying logi
     env:{},output:{send:async e=>{events.push(e);}},send:()=>{throw new Error('must not replay auth');},
     activity:{active:false,start:()=>{throw new Error('must not restart login');},cancel:()=>false,extend:()=>{}}});
   assert.deepEqual(events,[{type:'auth.reset'}]);assert.equal(runtime.runs.length,0);
+});
+
+test('terminal native auth failure emits auth.required for the affected message', async t => {
+  const {runtime,h}=await fixture(t);
+  await h.send({type:'configure',config:{tools:[],allowedTools:[],mcps:{}}});
+  const id=crypto.randomUUID();
+  await h.send({type:'queue',id,text:'test'});
+  await until(()=>runtime.runs.length===1);
+  runtime.runs[0]!.reject(new NativeAuthRequired());
+  await until(()=>h.events.some(e=>e.type==='auth.required'));
+  assert.ok(h.events.some(e=>e.type==='auth.required' && e.id===id));
 });

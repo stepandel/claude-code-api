@@ -27,7 +27,7 @@ export class Login {
         return true;
       }
       if(context.activity.active) {await context.output.send({type:'auth.error',attemptId:command.attemptId,code:'login_busy'});return true;}
-      if(await this.authenticated()) {await context.output.send({type:'auth.finished',attemptId:command.attemptId,outcome:'succeeded',authenticated:true});return true;}
+      if(!command.force && await this.authenticated()) {await context.output.send({type:'auth.finished',attemptId:command.attemptId,outcome:'succeeded',authenticated:true});return true;}
       const pair = await transport.generate();
       let key:CryptoKey;
       try {key=await transport.derive(pair.privateKey,command.publicKey);}

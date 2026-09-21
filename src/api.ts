@@ -29,14 +29,16 @@ export default defineApi<Command>(({ app, router, env }) => {
   route('GET', '/health', async () => Response.json({ok:true}));
   route('POST', '/v1/auth', async request => {
     const user = await identity(request, env);
-    const body = await readBody(request); fields(body,['attemptId','publicKey']);
+    const body = await readBody(request); fields(body,['attemptId','publicKey','force']);
+    if (body.force !== undefined && typeof body.force !== 'boolean') fail('Invalid force flag');
+    if (body.force && !body.attemptId) fail('Login attempt required');
     let start: Command = {type:'auth.check'};
     if(body.attemptId !== undefined || body.publicKey !== undefined) {
       const attemptId=uuid(body.attemptId); fields(body.publicKey,['kty','crv','x','y','ext','key_ops']);
       const k=body.publicKey;
       if(k.kty!=='EC'||k.crv!=='P-256'||typeof k.x!=='string'||typeof k.y!=='string'||
         !/^[A-Za-z0-9_-]{43}$/.test(k.x)||!/^[A-Za-z0-9_-]{43}$/.test(k.y)) fail('Invalid terminal public key');
-      start={type:'auth.start',attemptId,publicKey:{kty:'EC',crv:'P-256',x:k.x,y:k.y}};
+      start={type:'auth.start',attemptId,...(body.force ? {force:true} : {}),publicKey:{kty:'EC',crv:'P-256',x:k.x,y:k.y}};
     }
     const workspace = await app.workspaces.open({slug:user.workspaceSlug});
     const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});

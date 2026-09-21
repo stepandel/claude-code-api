@@ -202,3 +202,19 @@ Before production: integrate your identity issuer and key rotation/revocation st
 ## Verification
 
 Tests exercise actual SDK route definitions, JWT/tenant checks, Workspace/Session dispatch, managed activity queue/steer/cancel behaviour, durable reactivation, output fragmentation, and native subprocess parsing/cancellation using a fake Claude executable. They do not call a model or use subscription credentials. The login tests use a fake interactive Claude executable, verify PTY input/cancellation, and execute the compiled browser page against the real API handlers with simulated native login. A real subscription authorization and model turn require the user’s own account; automated tests do not sign in as the user.
+
+### Re-authentication
+
+The native CLI owns credential refresh in the durable workspace. Terminal native
+`authentication_failed` errors and an explicit signed-out status emit
+`auth.required` with the affected message ID. Status command failures are not
+classified as sign-out. A successful CLI turn after an internal auth retry does
+not emit `auth.required`; billing, rate-limit, and network failures retain normal
+failure handling.
+
+Clients should pause new work for the affected user and offer native sign-in.
+Pass `force: true` with the public-key handshake to `POST /v1/auth` to open a new
+login even when stale saved credentials still report signed in. Verify the
+matching `auth.finished` event reports `authenticated: true` and
+`outcome: succeeded` before clearing the pause. Interrupted work must not be
+replayed automatically because earlier tool actions may already have completed.

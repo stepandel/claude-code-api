@@ -1,6 +1,6 @@
 import { defineSessionBehaviour, type SessionContext, type SessionOutput } from '@cantelop/sdk/session';
 import { randomUUID } from 'node:crypto';
-import { NativeClaude, type ClaudeRuntime } from './claude.js';
+import { NativeAuthRequired, NativeClaude, type ClaudeRuntime } from './claude.js';
 import { Login } from './login.js';
 import { StateStore, type State } from './state.js';
 import type { Command, Event, Message, Status } from './contracts.js';
@@ -36,7 +36,7 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
       if (activity.signal.aborted) abort();
       try {
         await status(activity.output,message);
-        if (!await runtime.authenticated()) throw new Error('Native authentication required');
+        if (!await runtime.authenticated()) throw new NativeAuthRequired();
         await runtime.run({config:state!.config!,conversationId:state!.conversationId,resume:state!.resume,
           text:message.text,signal:controller.signal,
           initialized:async () => { state!.resume = true; await save(); },
@@ -49,7 +49,11 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
             }
           }});
         message.status = current.outcome ?? 'completed';
-      } catch { message.status = current.outcome ?? 'failed'; }
+      } catch (error) {
+        message.status = current.outcome ?? 'failed';
+        if (!controller.signal.aborted && error instanceof NativeAuthRequired)
+          await activity.output.send({type:'auth.required',id:message.id});
+      }
       finally {
         activity.signal.removeEventListener('abort',abort);
         active = undefined;

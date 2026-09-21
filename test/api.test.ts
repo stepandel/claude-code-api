@@ -136,3 +136,11 @@ test('all auth operations reuse the original session keep-alive contract', async
   await f.request(`/v1/events?sessionId=${agent.sessionId}`);
   assert.equal(f.opened.at(-1).keepAliveSeconds,300);
 });
+
+test('forced native re-login requires a valid terminal handshake', async () => {
+  const f=fixture(), attemptId=crypto.randomUUID(), publicKey=pair.publicKey.export({format:'jwk'});
+  assert.equal((await f.request('/v1/auth',{force:true})).status,400);
+  assert.equal((await f.request('/v1/auth',{attemptId,publicKey,force:'yes'})).status,400);
+  assert.equal((await f.request('/v1/auth',{attemptId,publicKey,force:true})).status,202);
+  assert.equal((f.dispatched.at(-1) as {force?:boolean}).force,true);
+});

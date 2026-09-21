@@ -68,3 +68,11 @@ test('agent sessions cannot invoke native login or accept terminal input',async(
   await f.dispatch({type:'auth.start',attemptId:crypto.randomUUID(),publicKey:f.browser.publicKey},'tenant:agent');
   assert.equal(f.launches,1);assert.ok(f.events.some(e=>e.type==='error'&&e.code==='auth_session_required'));await f.stop();
 });
+
+test('forced reconnect opens the native login even when saved credentials appear signed in', async () => {
+  const f=await fixture(); await f.finish();
+  const next=crypto.randomUUID();
+  await f.dispatch({type:'auth.start',attemptId:next,publicKey:f.browser.publicKey,force:true});
+  await until(()=>f.launches===2);
+  await f.dispatch({type:'auth.cancel',attemptId:next}); await f.wait();
+});

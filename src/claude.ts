@@ -29,13 +29,29 @@ export interface Turn {
   initialized(): Promise<void>;
 }
 export interface ClaudeRuntime { authenticated(): Promise<boolean>; run(turn: Turn): Promise<void> }
+export class NativeAuthRequired extends Error {
+  constructor() { super('Claude sign-in required'); }
+}
+export function isNativeAuthFailure(event: Record<string, unknown>): boolean {
+  return event.type === 'assistant' && event.error === 'authentication_failed';
+}
+function authStatus(stdout: string): boolean {
+  const value = JSON.parse(stdout);
+  if (typeof value.loggedIn !== 'boolean') throw new Error('Claude authentication status unavailable');
+  return value.loggedIn;
+}
 export class NativeClaude implements ClaudeRuntime {
   constructor(private workspace = '/workspace', private binary = 'claude') {}
   async authenticated(): Promise<boolean> {
     try {
       const {stdout} = await exec(this.binary,['auth','status'],{cwd:this.workspace,env:claudeEnv(this.workspace),timeout:15000,maxBuffer:65536});
-      return JSON.parse(stdout).loggedIn === true;
-    } catch { return false; }
+      return authStatus(stdout);
+    } catch (error) {
+      // A signed-out CLI exits nonzero but still reports structured status.
+      const failure = error as {stdout?: string; killed?: boolean; signal?: string};
+      if (!failure.killed && !failure.signal && failure.stdout) return authStatus(failure.stdout);
+      throw new Error('Claude authentication status unavailable');
+    }
   }
   async run(turn: Turn): Promise<void> {
     turn.signal.throwIfAborted();
@@ -78,12 +94,13 @@ export class NativeClaude implements ClaudeRuntime {
     if (turn.signal.aborted) stop();
     child.stdin.on('error',() => {}); child.stdin.end(turn.text);
     child.stderr.resume(); child.stdout.setEncoding('utf8');
-    let pending = '', result = false, failed = false;
+    let pending = '', result = false, failed = false, authFailed = false;
     const line = async (text: string) => {
       if (!text.trim()) return;
       let event: Record<string,unknown>;
       try { event = JSON.parse(text); } catch { return; }
       if (!event || typeof event !== 'object') return;
+      authFailed ||= isNativeAuthFailure(event);
       if (event.type === 'system' && event.subtype === 'init') await turn.initialized();
       if (event.type === 'result') { result = true; failed ||= event.is_error === true; }
       await turn.emit(event);
@@ -100,7 +117,10 @@ export class NativeClaude implements ClaudeRuntime {
       await line(pending);
       const code = await done;
       turn.signal.throwIfAborted();
-      if (code !== 0 || !result || failed) throw new Error('Claude turn failed');
+      if (code !== 0 || !result || failed) {
+        if (authFailed) throw new NativeAuthRequired();
+        throw new Error('Claude turn failed');
+      }
     } finally {
       stop();
       // Always await the real native process, even when output transport fails.

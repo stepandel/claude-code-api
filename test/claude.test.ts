@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NativeClaude, cliArgs, claudeEnv } from '../src/claude.js';
+import { NativeClaude, NativeAuthRequired, isNativeAuthFailure, cliArgs, claudeEnv } from '../src/claude.js';
 const config = {tools:['Read'],allowedTools:['Read'],mcps:{}};
 async function fixture(t: any) {
   const root = await mkdtemp(join(tmpdir(),'cantelop-native-'));
@@ -78,4 +78,34 @@ test('omitted execution settings and default model preserve native defaults',()=
     const args=cliArgs(settings,'id',false);
     for(const flag of ['--model','--max-turns','--system-prompt-file']) assert.ok(!args.includes(flag));
   }
+});
+
+test('only structured native authentication errors request re-login', () => {
+  assert.equal(isNativeAuthFailure({type:'assistant',error:'authentication_failed'}),true);
+  for(const error of ['rate_limit','billing_error','server_error','unknown','overloaded'])
+    assert.equal(isNativeAuthFailure({type:'assistant',error}),false);
+  assert.equal(isNativeAuthFailure({type:'result',result:'authentication_failed'}),false);
+  assert.equal(isNativeAuthFailure({type:'user',error:'authentication_failed'}),false);
+});
+test('native runner reports terminal auth failure but allows successful recovery', async t => {
+  const root=await mkdtemp(join(tmpdir(),'cantelop-auth-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const binary=join(root,'fake-claude');
+  await writeFile(binary,`#!/usr/bin/env node
+process.stdin.resume(); process.stdin.on('end',()=>{
+console.log(JSON.stringify({type:'assistant',error:'authentication_failed'}));
+console.log(JSON.stringify({type:'result',is_error:process.argv.includes('--resume')===false}));
+});`,{mode:0o755});
+  const runtime=new NativeClaude(root,binary);
+  const turn={config,conversationId:crypto.randomUUID(),resume:false,text:'test',signal:new AbortController().signal,emit:async()=>{},initialized:async()=>{}};
+  await assert.rejects(runtime.run(turn),NativeAuthRequired);
+  await runtime.run({...turn,resume:true});
+});
+test('status command failures are unavailable, not signed-out', async t => {
+  const root=await mkdtemp(join(tmpdir(),'cantelop-status-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  await assert.rejects(new NativeClaude(root,join(root,'missing')).authenticated(),/unavailable/);
+  const binary=join(root,'fake-claude');
+  await writeFile(binary,'#!/usr/bin/env node\nconsole.log(JSON.stringify({loggedIn:false}));process.exit(1);',{mode:0o755});
+  assert.equal(await new NativeClaude(root,binary).authenticated(),false);
 });

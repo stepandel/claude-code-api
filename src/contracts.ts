@@ -11,7 +11,7 @@ export interface SessionConfig {
 }
 export type Command =
   | { type: 'auth.check' | 'snapshot' | 'drain' }
-  | { type: 'auth.start'; attemptId: string; publicKey: JsonWebKey }
+  | { type: 'auth.start'; attemptId: string; publicKey: JsonWebKey; force?: boolean }
   | { type: 'auth.input'; attemptId: string; sequence: number; iv: string; data: string }
   | { type: 'auth.cancel'; attemptId: string }
   | { type: 'configure'; config: SessionConfig }
@@ -25,6 +25,7 @@ export type Event =
   | { type: 'auth.finished'; attemptId: string; outcome: 'succeeded' | 'failed' | 'cancelled' | 'expired'; authenticated: boolean }
   | { type: 'auth.error'; attemptId: string; code: string; activeAttemptId?: string }
   | { type: 'auth.reset' }
+  | { type: 'auth.required'; id: string }
   | { type: 'auth.status'; authenticated: boolean }
   | { type: 'session.ready'; sessionId: string }
   | { type: 'session.state'; messages: Message[]; configured: boolean; truncated: boolean }
