@@ -75,8 +75,7 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
   });
   route('POST', '/v1/auth/complete', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);
-    // The caller has consumed login completion; release once this check and any activity settle.
-    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:0});
+    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
     return result(session.id, await session.request({type:'auth.check'},{timeoutMs:30_000,signal:request.signal}));
   });
   route('POST', '/v1/sessions', async request => {

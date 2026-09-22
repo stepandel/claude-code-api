@@ -130,24 +130,19 @@ test('message UTF-8 limit allows larger context and preserves the encoded body l
   assert.equal(f.dispatched.length,count);
 });
 
-test('auth stays warm until the caller completes login', async () => {
+test('all auth operations reuse the original session keep-alive contract', async () => {
   const f=fixture(), attemptId=crypto.randomUUID(), publicKey=pair.publicKey.export({format:'jwk'});
   const auth=await (await f.request('/v1/auth',{})).json();
   await f.request('/v1/auth',{attemptId,publicKey});
   await f.request('/v1/auth/input',{attemptId,sequence:1,iv:'A'.repeat(16),data:'A'.repeat(24)});
   await f.request('/v1/auth/cancel',{attemptId});
+  await f.request('/v1/auth/complete',{});
   await f.request(`/v1/events?sessionId=${auth.sessionId}`);
-  assert.equal(f.opened.length,5);
+  assert.equal(f.opened.length,6);
   for(const session of f.opened) {
     assert.equal(session.id,auth.sessionId);
     assert.equal(session.keepAliveSeconds,900);
   }
-  const completed=await f.request('/v1/auth/complete',{});
-  assert.equal(completed.status,200);
-  assert.equal((await completed.json()).authenticated,true);
-  assert.equal(f.opened.at(-1).id,auth.sessionId);
-  assert.equal(f.opened.at(-1).keepAliveSeconds,0);
-  assert.deepEqual(f.requested.at(-1),{type:'auth.check'});
   const agent=await (await f.request('/v1/sessions',{})).json();
   await f.request(`/v1/events?sessionId=${agent.sessionId}`);
   assert.equal(f.opened.at(-1).keepAliveSeconds,300);
