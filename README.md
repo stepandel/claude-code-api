@@ -32,11 +32,21 @@ flowchart LR
 
 In short, the Workspace is the durable identity and state boundary; Sandboxes are replaceable compute attached only while a login or agent Session is active.
 
-## Deploy to Cantelop
+## Get started
+
+### 1. Clone the repository
+
+The application requires Node.js 22+, Bun, Docker with `linux/amd64` support, and a compatible Cantelop CLI:
+
+```sh
+git clone https://github.com/stepandel/claude-code-api.git
+cd claude-code-api
+npm ci
+```
 
 Use the [Cantelop platform deployment guide](https://console.cantelop.dev/docs) for account setup, CLI installation and login, App management, release operations, logs, traces, rollback, and general platform troubleshooting. The steps below cover only the configuration and verification specific to this application.
 
-### 1. Choose the App identity
+### 2. Choose the App identity
 
 The `app` field in `cantelop.json` is currently `cantelop-claude-api`. Change it before creating the App if the deployment needs a different or environment-specific slug. The App uses that manifest to build two artifacts:
 
@@ -45,7 +55,7 @@ The `app` field in `cantelop.json` is currently `cantelop-claude-api`. Change it
 
 The custom image installs the repository-pinned, unmodified Claude Code binary plus the Python PTY helper used by native login. Cantelop supplies the runtime user, process entrypoint, Sandbox lifecycle, and `/workspace` mount.
 
-### 2. Configure application identity verification
+### 3. Configure application identity verification
 
 Create a local configuration file and replace every placeholder:
 
@@ -59,12 +69,11 @@ cp .env.example .env
 
 These values authenticate callers to this application. They are separate from Claude authentication, which each user completes later through Claude Code's native login. Do not add an Anthropic API key, Claude token, JWT signing key, or shared provider credential to this App.
 
-### 3. Verify the release locally
+### 4. Verify the release locally
 
-The build requires Node.js 22+, Bun, Docker with `linux/amd64` support, and a compatible Cantelop CLI:
+Run the application checks and qualify both release artifacts locally:
 
 ```sh
-npm ci
 npm run check
 npm test
 npm run build
@@ -72,7 +81,7 @@ npm run build
 
 `npm run build` delegates to `cantelop build` and qualifies both release artifacts without publishing them.
 
-### 4. Create, configure, and deploy the App
+### 5. Create, configure, and deploy the App
 
 Authenticate the CLI, create the manifest's App once, and sync the declared environment values:
 
@@ -94,7 +103,7 @@ cantelop releases --json
 
 Wait until the new release is active before sending traffic. The platform guide documents how to inspect build or activation failures, stream logs, examine traces and Sandboxes, and roll back a release.
 
-### 5. Smoke-test the deployment
+### 6. Smoke-test the deployment
 
 Use the deployed App origin as `BASE_URL`. Check the public health route, issue an ES256 application JWT whose `iss` and `aud` match the configured values, and visit `$BASE_URL/login` in a browser to start native Claude login:
 
