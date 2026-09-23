@@ -11,18 +11,21 @@ function token(sub = 'alice', extra = {}, key = pair.privateKey) {
   const input = `${encode({alg:'ES256'})}.${encode({sub,iss:'test',aud:'api',exp:Math.floor(Date.now()/1000)+300,...extra})}`;
   return `${input}.${sign('sha256',Buffer.from(input),{key,dsaEncoding:'ieee-p1363'}).toString('base64url')}`;
 }
-function fixture(requestError?: Error) {
+function fixture(requestError?: Error, authReply: Reply = {type:'auth.status',authenticated:true}, stopError?: Error) {
+  const stopped: string[] = [];
   const opened: any[] = [], workspaces: any[] = [], dispatched: Command[] = [];
   const requested: Command[] = [], requestOptions: any[] = [];
   const app = {
     workspaces:{open:async (input: any) => {workspaces.push(input); return {id:'ws-1',slug:input.slug};}},
     sessions:{open:(input: any) => {
       opened.push(input);
-      return {...input,dispatch:async (command: Command) => {dispatched.push(command);return {id:'receipt'};},
+      return {...input,stop:async () => {
+          assert.equal(requested.at(-1)?.type,'auth.check');stopped.push(input.id);if(stopError) throw stopError;
+        },dispatch:async (command: Command) => {dispatched.push(command);return {id:'receipt'};},
         request:async (command: Command, options: unknown) => {
           requested.push(command);requestOptions.push(options);
           if(requestError) throw requestError;
-          return command.type === 'auth.logout' ? {type:'auth.status',authenticated:false} : command.type === 'auth.check' ? {type:'auth.status',authenticated:true} :
+          return command.type === 'auth.logout' ? {type:'auth.status',authenticated:false} : command.type === 'auth.check' ? authReply :
             {type:'session.state',configured:true,messages:[],truncated:false};
         },
         events:async (request: Request) => new Response(request.headers.get('Last-Event-ID'),{headers:{'content-type':'text/event-stream'}})};
@@ -32,7 +35,7 @@ function fixture(requestError?: Error) {
   const request = async (path: string, body?: unknown, auth = token(), headers = {}) => router.handle(new Request(`https://app.example${path}`,{
     method:body === undefined ? 'GET' : 'POST',headers:{authorization:`Bearer ${auth}`,...headers},
     ...(body === undefined ? {} : {body:JSON.stringify(body)})}));
-  return {request,opened,workspaces,dispatched,requested,requestOptions};
+  return {request,opened,workspaces,dispatched,requested,requestOptions,stopped};
 }
 test('SDK allocates server-selected user Workspace and native-auth Session; repeat provisioning is stable', async () => {
   const f = fixture();
@@ -193,3 +196,27 @@ test('logout uses caller auth session and waits for native sign-out', async()=>{
   assert.match(f.opened[0].id,/:auth$/);
   assert.equal((await f.request('/v1/auth/logout',{sessionId:'other:auth'})).status,400);
 });
+
+for (const path of ['/v1/auth','/v1/auth/complete']) {
+  test(`${path} stops only the caller's authenticated sandbox after checking native auth`,async()=>{
+    const f=fixture(),response=await f.request(path,{});assert.equal(response.status,200);
+    const reply=await response.json();assert.equal(reply.authenticated,true);
+    assert.deepEqual(f.stopped,[reply.sessionId]);assert.match(reply.sessionId,/:auth$/);
+    assert.equal((await f.request(path,{},'invalid')).status,401);assert.equal(f.stopped.length,1);
+  });
+
+  test(`${path} leaves unauthenticated and unsuccessful checks running`,async()=>{
+    for(const reply of [{type:'auth.status',authenticated:false},{type:'error',code:'auth_session_required'}] as Reply[]) {
+      const f=fixture(undefined,reply);assert.equal((await f.request(path,{})).status,200);assert.deepEqual(f.stopped,[]);
+    }
+    const f=fixture(new RemoteAppError('request_wait_timeout',504));
+    assert.equal((await f.request(path,{})).status,504);assert.deepEqual(f.stopped,[]);
+  });
+
+  test(`${path} surfaces sandbox stop failures for retry`,async()=>{
+    const f=fixture(undefined,undefined,new RemoteAppError('stop_failed',503));
+    const response=await f.request(path,{});assert.equal(response.status,503);
+    assert.deepEqual(await response.json(),{error:'Operation failed',code:'stop_failed'});
+    assert.equal(response.headers.get('cache-control'),'no-store');
+  });
+}

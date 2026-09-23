@@ -46,9 +46,13 @@ export function loginClient(createCrypto: typeof terminalCrypto) {
       if(!key||sequence!==outputSequence+1) throw new Error('Terminal output was lost. Cancel this attempt and start again.');
       render(await transport.open(key,value,`${attemptId}:output:${sequence}`));outputSequence=sequence;
     } else if(value.type==='auth.finished') {
-      finished=true;controls(false);cancel.disabled=true;start.disabled=false;input.value='';
+      finished=true;controls(false);cancel.disabled=true;input.value='';key=undefined;pair=undefined;
+      if(value.authenticated&&value.outcome==='succeeded') {
+        const completed=await post('/v1/auth/complete',{});
+        if(completed.type!=='auth.status'||completed.authenticated!==true) throw new Error('Claude sign-in could not be confirmed. Start again.');
+      }
+      start.disabled=false;
       display(value.authenticated&&value.outcome==='succeeded'?'Claude is connected. You can now create agent sessions.':`Login ${value.outcome}. You can start again.`);
-      key=undefined;pair=undefined;
     } else if(value.type==='auth.error') {
       if(value.activeAttemptId) {activeAttemptId=value.activeAttemptId;cancel.disabled=false;}
       throw new Error(value.code==='login_busy'?'Another login is active. Cancel it before starting again.':`Login error: ${value.code}. Cancel and start again.`);

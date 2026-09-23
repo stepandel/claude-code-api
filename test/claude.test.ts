@@ -51,7 +51,11 @@ test('CLI flags retain explicit tools and MCPs, no shared credentials inherited'
   assert.ok(args.includes('--strict-mcp-config'));assert.ok(args.includes('--resume'));
   assert.ok(!args.includes('--dangerously-skip-permissions'));
   process.env.ANTHROPIC_API_KEY='must-not-be-inherited';
-  try {assert.equal(claudeEnv('/workspace').ANTHROPIC_API_KEY,undefined);}
+  try {
+    assert.equal(claudeEnv('/workspace').ANTHROPIC_API_KEY,undefined);
+    assert.equal(claudeEnv('/workspace').DISABLE_AUTOUPDATER,'1');
+    assert.equal(claudeEnv('/workspace').DISABLE_UPDATES,'1');
+  }
   finally {delete process.env.ANTHROPIC_API_KEY;}
 });
 

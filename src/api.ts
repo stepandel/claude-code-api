@@ -31,6 +31,13 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
     {sessionId, receiptId: message.id, ...extra}, {status:202, headers:{'cache-control':'no-store'}});
   const result = (sessionId: string, reply: Reply, extra = {}) => Response.json(
     {sessionId,...reply,...extra}, {headers:{'cache-control':'no-store'}});
+  const checkAuth = async (session: ReturnType<typeof app.sessions.open>, request: Request) => {
+    const reply = await session.request({type:'auth.check'},{timeoutMs:30_000,signal:request.signal});
+    // Credentials live in the persistent Workspace, so release the Sandbox once native auth is confirmed.
+    // Await cleanup so a platform failure is returned and the caller can retry.
+    if (reply.type === 'auth.status' && reply.authenticated) await session.stop();
+    return reply;
+  };
   route('GET', '/login', async () => loginPage());
   route('GET', '/health', async () => Response.json({ok:true}));
   route('POST', '/v1/auth', async request => {
@@ -50,7 +57,7 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
     const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
     const metadata = {workspaceId:workspace.id, workspaceSlug:workspace.slug, workspace:'/workspace',loginPage:'/login'};
     if (start.type === 'auth.check') {
-      return result(session.id, await session.request(start,{timeoutMs:30_000,signal:request.signal}),metadata);
+      return result(session.id, await checkAuth(session,request),metadata);
     }
     return accepted(session.id, await session.dispatch(start), metadata);
   });
@@ -76,7 +83,7 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
   route('POST', '/v1/auth/complete', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);
     const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
-    return result(session.id, await session.request({type:'auth.check'},{timeoutMs:30_000,signal:request.signal}));
+    return result(session.id, await checkAuth(session,request));
   });
   route('POST', '/v1/sessions', async request => {
     const user = await identity(request, env), settings = config(await readBody(request));

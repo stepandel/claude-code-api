@@ -1,8 +1,8 @@
 # Cantelop Claude Code API
 
-A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.10.0`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
+A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.12.0`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
 
-SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.10.0). Version 0.10.0 was verified against GitHub and npm on September 21, 2026. Builds require a Cantelop CLI compatible with SDK build protocol 5 (verified with CLI 0.9.2). The API artifact publishes all 11 application routes for the Cantelop console.
+SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.12.0). Version 0.12.0 was verified against GitHub and npm on September 23, 2026. Builds require a Cantelop CLI compatible with SDK build protocol 5 (verified with CLI 0.11.2). The API artifact publishes all 11 application routes for the Cantelop console.
 
 ## Architecture
 
@@ -36,7 +36,7 @@ Anthropic's [hosting conditions](https://code.claude.com/docs/en/legal-and-compl
 
 ## Local setup
 
-Requires Node.js 22+, the Cantelop CLI, Bun, and Docker with `linux/amd64` support.
+Requires Node.js 22+, Cantelop CLI 0.11.2+, Bun, and Docker with `linux/amd64` support. The dev script uses `cantelop dev --container` so Sessions run the service's Docker image with Claude Code, Python, and the PTY helper installed.
 
 ```sh
 npm ci
@@ -50,7 +50,7 @@ npm run dev
 
 Use an ES256 JWT issued by your application authentication system as `USER_TOKEN`, matching the public key, issuer, and audience configured in `.env`. Use the API base URL printed by `cantelop dev` as `BASE_URL`. The project does not issue application tokens.
 
-`npm run build` runs `cantelop build`, which reads `cantelop.json` and builds both the Edge API and native Session image. For a reproducible production image, pin the Dockerfile's `CLAUDE_VERSION` to an audited version; the scaffold defaults to Anthropic's stable channel.
+`npm run build` runs `cantelop build`, which reads `cantelop.json` and builds both the Edge API and native Session image. The Dockerfile downloads Claude Code 2.1.267 directly and checks repository-pinned SHA-256 hashes for Linux amd64 and arm64 before installing it. Runtime auto-updates are disabled. To update Claude, change the version and both checksums together using Anthropic's release manifest, then run the service tests and image build.
 
 ## API usage
 
@@ -62,6 +62,8 @@ For interactive subscription login, use `/login`. Programmatic clients can imple
 4. `auth.started` returns the Session's public JWK and `expiresAt`. Derive the AES-GCM key using `src/terminal-crypto.ts`. Encrypted `auth.output` events carry `terminalSequence`, `iv`, and `data`. Decrypt with additional authenticated data `<attemptId>:output:<terminalSequence>`.
 5. Send encrypted terminal bytes to `POST /v1/auth/input` as `{attemptId, sequence, iv, data}`. Input sequence starts at 1; AAD is `<attemptId>:input:<sequence>`. IV is 12 random bytes; IV and ciphertext use standard base64. Input is limited to 4 KiB per frame and 32 KiB per attempt. Duplicate accepted sequences are ignored; gaps are rejected. No plaintext code field is accepted.
 6. `POST /v1/auth/cancel` with `{attemptId}` stops an attempt. `auth.finished` reports the outcome and native authentication status. `POST /v1/auth/complete` with `{}` returns HTTP 200 with `{sessionId, type: "auth.status", authenticated}` directly.
+
+After a successful `auth.finished` event, call `POST /v1/auth/complete`; the bundled login page does this automatically. Both this endpoint and the status-only `POST /v1/auth` stop the auth Session's Sandbox once native authentication is confirmed, using SDK 0.12's `session.stop()`. Cleanup completes before the API returns success; platform stop failures are returned for retry. Stopping closes event streams, preserves credentials in the persistent Workspace, and allows later requests to reactivate the same Session. Unauthenticated checks leave the Sandbox available for login.
 
 The server derives the auth Session from the caller's JWT; clients cannot select a different user's terminal. The browser implementation in `src/login-page.ts` demonstrates the complete flow, including subscribing before dispatch and handling encrypted event replay.
 
@@ -164,7 +166,7 @@ The HTTP 200 response contains `{sessionId, type: "session.state", configured, m
 | POST | `/v1/auth` | Allocate Workspace, check auth, or start encrypted native login |
 | POST | `/v1/auth/input` | Send encrypted input to the caller’s login terminal |
 | POST | `/v1/auth/cancel` | Cancel the caller’s active login attempt |
-| POST | `/v1/auth/complete` | Return native authentication status directly |
+| POST | `/v1/auth/complete` | Confirm native authentication and stop the auth Sandbox |
 | POST | `/v1/sessions` | Create and configure a Session |
 | POST | `/v1/messages` | Queue or steer a message |
 | POST | `/v1/cancel` | Cancel a queued or active message |
@@ -173,7 +175,7 @@ The HTTP 200 response contains `{sessionId, type: "session.state", configured, m
 
 All API routes except health require an application JWT; the static login page is public. Workspace selection is derived from verified identity; clients cannot select another user's Workspace. Session ownership is checked before dispatch, requests, and event subscription.
 
-With SDK 0.11.0, auth checks and snapshots use `session.request()` and return HTTP 200 with the result instead of a 202 receipt. Clients must read these response bodies instead of waiting for status/snapshot events. Requests wait up to 30 seconds; timeout returns HTTP 504 with `code: "request_wait_timeout"`. A timeout or disconnect stops waiting, not execution; these read-only checks can be repeated. Interactive login start/input/cancel, Session configuration, and model queue/steer/cancel remain asynchronous (202), with outcomes delivered as events. Use a deployed platform for request/reply verification; CLI 0.10.0's local development bridge does not support the request endpoint.
+Auth checks and snapshots use `session.request()` and return HTTP 200 with the result instead of a 202 receipt. Clients must read these response bodies instead of waiting for status/snapshot events. Requests wait up to 30 seconds; timeout returns HTTP 504 with `code: "request_wait_timeout"`. A timeout or disconnect stops waiting, not execution; these read-only checks can be repeated. Interactive login start/input/cancel, Session configuration, and model queue/steer/cancel remain asynchronous (202), with outcomes delivered as events.
 
 ## Queue, cancellation, and durability
 

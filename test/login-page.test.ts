@@ -31,7 +31,7 @@ test('compiled login page completes encrypted native terminal flow with app bear
   const issuer=generateKeyPairSync('ec',{namedCurve:'P-256'}),encode=(v:unknown)=>Buffer.from(JSON.stringify(v)).toString('base64url');
   const claims=`${encode({alg:'ES256'})}.${encode({sub:'browser-user',iss:'test',aud:'test',exp:Math.floor(Date.now()/1000)+60})}`;
   elements.get('token')!.value=`${claims}.${sign('sha256',Buffer.from(claims),{key:issuer.privateKey,dsaEncoding:'ieee-p1363'}).toString('base64url')}`;
-  let authenticated=false,active=false,stream:ReadableStreamDefaultController<Uint8Array>|undefined,finish!:(code:number)=>void,sequence=0;
+  let authenticated=false,active=false,stream:ReadableStreamDefaultController<Uint8Array>|undefined,finish!:(code:number)=>void,sequence=0,stopped=0;
   const commands:Command[]=[],events:any[]=[],written:string[]=[],eventRequests:Request[]=[];
   const output={send:async(event:any)=>{events.push(event);stream?.enqueue(new TextEncoder().encode(`id: test:${++sequence}\ndata: ${JSON.stringify({...event,sequence})}\n\n`));}};
   const login=new Login(async()=>authenticated,(_signal,emit)=>{
@@ -40,13 +40,14 @@ test('compiled login page completes encrypted native terminal flow with app bear
     return {done,stop:()=>finish(1),write:async data=>{written.push(data);authenticated=true;finish(0);}};
   });
   const app:any={workspaces:{open:async({slug}:any)=>({id:'ws',slug})},sessions:{open:(options:any)=>({...options,
+    stop:async()=>{assert.equal(authenticated,true);assert.equal(events.at(-1)?.type,'auth.finished');stopped++;stream?.close();stream=undefined;},
     request:async(payload:Command)=>{
       let reply:unknown;
       commands.push(payload);
       await login.receive({session:options,env:{},message:{id:crypto.randomUUID(),sequence:1,payload},output,
         reply:value=>{reply=value;},signal:new AbortController().signal,send:()=>{},
         activity:{active:false,start:()=>{throw new Error('status must not start login');},cancel:()=>false,extend:()=>{}}});
-      assert.deepEqual(reply,{type:'auth.status',authenticated:false});
+      assert.deepEqual(reply,{type:'auth.status',authenticated});
       return reply;
     },
     dispatch:async(payload:Command)=>{commands.push(payload);await login.receive({session:options,env:{},message:{id:crypto.randomUUID(),sequence:1,payload},output,signal:new AbortController().signal,send:()=>{},activity:{get active(){return active;},start:work=>{active=true;void Promise.resolve().then(()=>work({signal:new AbortController().signal,output,send:()=>{}})).finally(()=>{active=false;});},cancel:()=>false,extend:()=>{}}});return{id:'receipt'};},
@@ -65,6 +66,7 @@ test('compiled login page completes encrypted native terminal flow with app bear
   assert.match(eventRequests[1]!.headers.get('Last-Event-ID')!,/^test:/);
   elements.get('input')!.value='PRIVATE-CODE';await elements.get('terminal-input')!.fire('submit');
   await until(()=>elements.get('status')!.textContent.includes('Claude is connected'));
+  assert.equal(stopped,1);assert.equal(commands.at(-1)?.type,'auth.check');
   assert.deepEqual(written,['PRIVATE-CODE\r']);assert.equal(elements.get('input')!.value,'');assert.equal(elements.get('token')!.value,'');
   assert.ok(!JSON.stringify(commands).includes('PRIVATE-CODE'));assert.ok(!JSON.stringify(events).includes('PRIVATE-CODE'));
   assert.equal(elements.get('send')!.disabled,true);
