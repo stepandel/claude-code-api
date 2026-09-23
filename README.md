@@ -2,6 +2,36 @@
 
 A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.12.0`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
 
+## Architectural overview
+
+This repository is a reference implementation for self-managed Claude Code hosting on Cantelop. It does not modify the Claude Code binary, harness, or built-in authentication methods. Each end user signs in through Claude Code's native Anthropic flow with their own Claude subscription or provider credentials; the application does not collect, proxy, or resell those credentials or the resulting model usage.
+
+That boundary follows Anthropic's conditions for [hosting Claude Code in a product](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products): run the published binary unchanged, preserve every built-in authentication method, and have each user authenticate and pay under their own Anthropic or inference-provider agreement. It also preserves native subscription authentication instead of injecting an `ANTHROPIC_API_KEY`. Billing still follows the user's plan and Anthropic's current rules: included limits, Agent SDK or `claude -p` credits, and any separately enabled usage credits may apply. This project does not guarantee that a run will never consume usage credits.
+
+The central design separates durable user state from disposable compute:
+
+```mermaid
+flowchart LR
+    Client[Client] --> API[Cantelop Edge API]
+    API --> Identity[Verified application identity]
+    Identity --> Workspace[(One durable Workspace per user)]
+    API --> Auth[Auth Session Sandbox]
+    API --> S1[Agent Session Sandbox]
+    API --> S2[Concurrent Agent Session Sandbox]
+    Workspace --- Auth
+    Workspace --- S1
+    Workspace --- S2
+    Workspace --> Claude[.claude / native authentication state]
+    Workspace --> State[.cantelop / application session state]
+```
+
+- **One durable Workspace per user.** The API derives its Workspace slug from the verified application identity, so callers cannot select another user's Workspace. Claude Code writes its native authentication state beneath `/workspace/.claude`; application session state lives beneath `/workspace/.cantelop`.
+- **One ephemeral Sandbox per active Session.** Cantelop creates or reactivates the execution environment, mounts the user's Workspace at `/workspace`, and releases the Sandbox after work becomes idle or is explicitly stopped. Releasing a Sandbox does not remove the Workspace.
+- **Native authentication survives Sandbox replacement.** A later Session mounts the same Workspace and Claude Code reads the authentication state it previously wrote. The application points `CLAUDE_CONFIG_DIR` at the mounted Workspace but never reads or exports Claude's credentials.
+- **Concurrency is supported.** Multiple Session Sandboxes can mount the same user's Workspace at once. They share authentication and files but retain separate Claude conversation IDs, queues, and configuration. Because concurrent Sessions can edit the same files, callers must coordinate conflicting work.
+
+In short, the Workspace is the durable identity and state boundary; Sandboxes are replaceable compute attached only while a login or agent Session is active.
+
 ## API interface
 
 Set `BASE_URL` to the deployed App origin and send the application JWT as a bearer token on every `/v1/*` request:
@@ -77,7 +107,7 @@ Configuration is immutable after Session creation. Create a new Session to chang
 
 SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.12.0). Version 0.12.0 was verified against GitHub and npm on September 23, 2026. Builds require a Cantelop CLI compatible with SDK build protocol 5 (verified with CLI 0.11.2). The API artifact publishes all 12 application routes for the Cantelop console.
 
-## Architecture
+## Implementation map
 
 - `src/api.ts`: `defineApi`, JWT verification, `app.workspaces.open`, `app.sessions.open`, dispatch, and authenticated event streaming. No local server or Docker daemon management.
 - `src/session.ts`: `defineSessionBehaviour`, managed activities for long-running turns, queue/steer/cancel handling, and recovery.
