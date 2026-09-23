@@ -2,7 +2,80 @@
 
 A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.12.0`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
 
-SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.12.0). Version 0.12.0 was verified against GitHub and npm on September 23, 2026. Builds require a Cantelop CLI compatible with SDK build protocol 5 (verified with CLI 0.11.2). The API artifact publishes all 11 application routes for the Cantelop console.
+## API interface
+
+Set `BASE_URL` to the deployed App origin and send the application JWT as a bearer token on every `/v1/*` request:
+
+```sh
+Authorization: Bearer $USER_TOKEN
+Content-Type: application/json
+```
+
+The JWT must be ES256-signed and contain `sub`, `iss`, `aud`, and `exp` claims matching the App configuration. The API derives the caller's Workspace and Session ownership from that identity; clients cannot select another user's Workspace.
+
+| Method | Route | Request | Response |
+| --- | --- | --- | --- |
+| GET | `/health` | — | `200 {"ok":true}`; public |
+| GET | `/login` | — | Native Claude subscription login page; public page, authenticated API calls |
+| POST | `/v1/auth` | `{}` to check status, or an encrypted-login handshake | `200` auth status or `202` receipt |
+| POST | `/v1/auth/input` | Encrypted terminal frame | `202` receipt |
+| POST | `/v1/auth/cancel` | `{"attemptId":"<uuid>"}` | `202` receipt |
+| POST | `/v1/auth/complete` | `{}` | `200` auth status |
+| POST | `/v1/auth/logout` | `{}` | `200` signed-out status |
+| POST | `/v1/sessions` | Session configuration | `202 {sessionId,receiptId}` |
+| POST | `/v1/messages` | `{sessionId,text,mode?,messageId?}` | `202 {sessionId,receiptId,messageId}` |
+| POST | `/v1/cancel` | `{sessionId,messageId}` | `202 {sessionId,receiptId,messageId}` |
+| POST | `/v1/snapshot` | `{sessionId}` | `200` persisted Session summary |
+| GET | `/v1/events?sessionId=...` | — | Authenticated SSE or WebSocket event stream |
+
+### Core workflow
+
+First connect the user's native Claude subscription at `/login`, or use the encrypted programmatic login protocol described under [Authentication boundary](#authentication-boundary). Then create an immutable agent Session:
+
+```sh
+curl "$BASE_URL/v1/sessions" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model":"sonnet",
+    "systemPrompt":"Use the available project tools.",
+    "maxTurns":24,
+    "tools":["Read","Glob","Grep"],
+    "allowedTools":["Read","Glob","Grep","mcp__project__search"],
+    "mcps":{
+      "project":{
+        "type":"http",
+        "url":"https://tools.example.com/mcp",
+        "headers":{"Authorization":"Bearer SESSION_SCOPED_TOKEN"}
+      }
+    }
+  }'
+```
+
+Save the returned `sessionId`, subscribe to output, and send work:
+
+```sh
+curl -N "$BASE_URL/v1/events?sessionId=$SESSION_ID" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
+curl "$BASE_URL/v1/messages" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"sessionId\":\"$SESSION_ID\",\"text\":\"Inspect this project\",\"mode\":\"queue\"}"
+```
+
+Session configuration fields:
+
+- `tools`: built-in Claude Code tools exposed to the model. Defaults to none.
+- `allowedTools`: exposed tools or native permission rules that may run unattended. Everything else is denied because the runner uses `dontAsk`.
+- `mcps`: named `http`, `sse`, or `stdio` MCP server configurations. Discovered tools are named `mcp__<server>__<tool>` and must match `allowedTools` to execute.
+- `model`: optional native Claude model alias or ID.
+- `systemPrompt`: optional replacement system prompt, up to 32 KiB of UTF-8.
+- `maxTurns`: optional per-message turn limit from 1 to 100.
+
+Configuration is immutable after Session creation. Create a new Session to change models, prompts, tools, MCP servers, or run-scoped credentials. POST bodies are limited to 48 KiB; message text is limited to 32 KiB of UTF-8.
+
+SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.12.0). Version 0.12.0 was verified against GitHub and npm on September 23, 2026. Builds require a Cantelop CLI compatible with SDK build protocol 5 (verified with CLI 0.11.2). The API artifact publishes all 12 application routes for the Cantelop console.
 
 ## Architecture
 
@@ -115,7 +188,7 @@ Session creation is asynchronous: observe `session.ready` and `auth.status`. A S
 }
 ```
 
-HTTP/SSE servers may include `headers`; stdio servers may include `env`. Tool code and dependencies must exist in the Sandbox. MCP settings may contain secrets and are persisted within the user's Workspace. Grant matching permissions explicitly, such as `mcp__docs__search`. Session configuration is immutable; create a new Session to change it.
+HTTP/SSE servers may include `headers`; their tool implementations run remotely and only need to be reachable from the Sandbox. Stdio servers may include `env`; their command, tool code, and dependencies must exist inside the Sandbox. MCP settings may contain secrets and are persisted within the user's Workspace. Grant matching permissions explicitly, such as `mcp__docs__search`. Session configuration is immutable; create a new Session to change it.
 
 Send queued or steering messages:
 
@@ -158,20 +231,6 @@ curl "$BASE_URL/v1/snapshot" -H "Authorization: Bearer $USER_TOKEN" \
 ```
 
 The HTTP 200 response contains `{sessionId, type: "session.state", configured, messages, truncated}` directly, with the latest 50 messages and prompt previews capped at 256 characters. It is a summary, not a full transcript API. Sandbox recovery still emits a `session.state` event.
-
-| Method | Route | Behaviour |
-| --- | --- | --- |
-| GET | `/health` | Public liveness |
-| GET | `/login` | Native login page (API actions require a bearer token) |
-| POST | `/v1/auth` | Allocate Workspace, check auth, or start encrypted native login |
-| POST | `/v1/auth/input` | Send encrypted input to the caller’s login terminal |
-| POST | `/v1/auth/cancel` | Cancel the caller’s active login attempt |
-| POST | `/v1/auth/complete` | Confirm native authentication and stop the auth Sandbox |
-| POST | `/v1/sessions` | Create and configure a Session |
-| POST | `/v1/messages` | Queue or steer a message |
-| POST | `/v1/cancel` | Cancel a queued or active message |
-| POST | `/v1/snapshot` | Return persisted Session summary directly |
-| GET | `/v1/events?sessionId=...` | SDK SSE/WebSocket stream |
 
 All API routes except health require an application JWT; the static login page is public. Workspace selection is derived from verified identity; clients cannot select another user's Workspace. Session ownership is checked before dispatch, requests, and event subscription.
 
