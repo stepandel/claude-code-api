@@ -34,9 +34,21 @@ In short, the Workspace is the durable identity and state boundary; Sandboxes ar
 
 ## Get started
 
-### 1. Clone the repository
+### 1. Install the CLI and clone the repository
 
-The application requires Node.js 22+, Bun, Docker with `linux/amd64` support, and a compatible Cantelop CLI:
+The only Cantelop-specific local setup is installing its CLI. With Homebrew:
+
+```sh
+brew install stepandel/tap/cantelop
+```
+
+On macOS or Linux without Homebrew, use the official installer:
+
+```sh
+curl -fsSL https://console.cantelop.dev/install.sh | sh
+```
+
+Then clone the application and install its dependencies:
 
 ```sh
 git clone https://github.com/stepandel/claude-code-api.git
@@ -44,7 +56,9 @@ cd claude-code-api
 npm ci
 ```
 
-Use the [Cantelop platform deployment guide](https://console.cantelop.dev/docs) for account setup, CLI installation and login, App management, release operations, logs, traces, rollback, and general platform troubleshooting. The steps below cover only the configuration and verification specific to this application.
+The application also requires Node.js 22+, Bun, and Docker with `linux/amd64` support. No Cantelop service runs locally: the CLI builds and deploys the App, while Cantelop manages the hosted Edge API, Workspaces, and Sandboxes. CLI account authentication happens later with `cantelop login`.
+
+Use the [Cantelop platform deployment guide](https://console.cantelop.dev/docs) for account management, complete CLI documentation, release operations, logs, traces, rollback, and platform troubleshooting. The steps below cover the configuration and verification specific to this application.
 
 ### 2. Choose the App identity
 
