@@ -32,6 +32,78 @@ flowchart LR
 
 In short, the Workspace is the durable identity and state boundary; Sandboxes are replaceable compute attached only while a login or agent Session is active.
 
+## Deploy to Cantelop
+
+Use the [Cantelop platform deployment guide](https://console.cantelop.dev/docs) for account setup, CLI installation and login, App management, release operations, logs, traces, rollback, and general platform troubleshooting. The steps below cover only the configuration and verification specific to this application.
+
+### 1. Choose the App identity
+
+The `app` field in `cantelop.json` is currently `cantelop-claude-api`. Change it before creating the App if the deployment needs a different or environment-specific slug. The App uses that manifest to build two artifacts:
+
+- the Edge API from `src/api.ts`;
+- the native Session runtime from `src/session.ts` and `docker/Dockerfile`.
+
+The custom image installs the repository-pinned, unmodified Claude Code binary plus the Python PTY helper used by native login. Cantelop supplies the runtime user, process entrypoint, Sandbox lifecycle, and `/workspace` mount.
+
+### 2. Configure application identity verification
+
+Create a local configuration file and replace every placeholder:
+
+```sh
+cp .env.example .env
+```
+
+- `AUTH_PUBLIC_JWK`: the public P-256 JWK used to verify application JWTs. Do not provide its private key.
+- `AUTH_ISSUER`: the exact JWT `iss` value issued by your identity system.
+- `AUTH_AUDIENCE`: the exact JWT `aud` value accepted by this API; it defaults to `cantelop-claude-api`.
+
+These values authenticate callers to this application. They are separate from Claude authentication, which each user completes later through Claude Code's native login. Do not add an Anthropic API key, Claude token, JWT signing key, or shared provider credential to this App.
+
+### 3. Verify the release locally
+
+The build requires Node.js 22+, Bun, Docker with `linux/amd64` support, and a compatible Cantelop CLI:
+
+```sh
+npm ci
+npm run check
+npm test
+npm run build
+```
+
+`npm run build` delegates to `cantelop build` and qualifies both release artifacts without publishing them.
+
+### 4. Create, configure, and deploy the App
+
+Authenticate the CLI, create the manifest's App once, and sync the declared environment values:
+
+```sh
+cantelop login
+cantelop app create -slug cantelop-claude-api
+cantelop env sync --env-file .env --dry-run
+cantelop env sync --env-file .env
+```
+
+If you changed the `app` field, use the same slug with `app create`. For an App that already exists, skip the create command. Then run the platform preflight, build without publishing, and create the release:
+
+```sh
+cantelop doctor
+cantelop deploy --dry-run
+cantelop deploy
+cantelop releases --json
+```
+
+Wait until the new release is active before sending traffic. The platform guide documents how to inspect build or activation failures, stream logs, examine traces and Sandboxes, and roll back a release.
+
+### 5. Smoke-test the deployment
+
+Use the deployed App origin as `BASE_URL`. Check the public health route, issue an ES256 application JWT whose `iss` and `aud` match the configured values, and visit `$BASE_URL/login` in a browser to start native Claude login:
+
+```sh
+curl "$BASE_URL/health"
+```
+
+After the user signs in with their own Claude account, use the [core workflow](#core-workflow) to create a Session, subscribe to its events, and send a message. A production rollout should also verify tenant isolation with at least two application identities and confirm that a new Sandbox can reuse each user's native authentication from the durable Workspace.
+
 ## API interface
 
 Set `BASE_URL` to the deployed App origin and send the application JWT as a bearer token on every `/v1/*` request:
@@ -280,9 +352,7 @@ Configuration, message IDs/statuses, pending queue, and conversation identity su
 
 Sessions share files within the same user's Workspace; concurrent sessions can edit the same files. Data persists when Cantelop releases a Sandbox. A Session retains at most 1,000 application messages; create a new Session after that. Queue snapshots are atomically replaced; this is not a general transactional database or an exactly-once tool-execution guarantee.
 
-## Deployment and remaining work
-
-Configure the public identity settings in `cantelop.json` through Cantelop App configuration, then use the standard `cantelop doctor` / `cantelop deploy --dry-run` / `cantelop deploy` workflow. A dry run builds without publishing. Use `cantelop releases --json` to inspect component status and deployment errors, and wait for the selected release to become active before checking live endpoints.
+## Production checklist
 
 Choose an application name, issuer, and audience for your own deployment. Configure only the public ES256 verification JWK in Cantelop; keep signing keys and bearer tokens outside the repository and runtime environment. A bootstrap token can provide initial operator access, but production deployments should use their own multi-user identity provider, expiration policy, and key-rotation process. Application authentication remains separate from each user's native Claude subscription authentication.
 
