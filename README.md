@@ -80,15 +80,15 @@ Optional session execution settings can be supplied alongside MCP configuration:
 ```json
 {
   "model": "sonnet",
-  "systemPrompt": "You operate this canvas using only the supplied Doop tools.",
+  "systemPrompt": "Use only the supplied project tools.",
   "maxTurns": 24,
   "tools": [],
-  "allowedTools": ["mcp__doop__*"],
+  "allowedTools": ["mcp__project__*"],
   "mcps": {
-    "doop": {
+    "project": {
       "type": "http",
-      "url": "https://your-doop.example/local-agent/mcp/RUN_ID",
-      "headers": {"Authorization": "Bearer RUN_SCOPED_TOKEN"}
+      "url": "https://tools.example.com/mcp",
+      "headers": {"Authorization": "Bearer SESSION_SCOPED_TOKEN"}
     }
   }
 }
@@ -193,13 +193,9 @@ Sessions share files within the same user's Workspace; concurrent sessions can e
 
 ## Deployment and remaining work
 
-Configure the public identity settings in `cantelop.json` through Cantelop App configuration, then use the standard `cantelop doctor` / `cantelop deploy --dry-run` / `cantelop deploy` workflow. A dry run builds without publishing.
+Configure the public identity settings in `cantelop.json` through Cantelop App configuration, then use the standard `cantelop doctor` / `cantelop deploy --dry-run` / `cantelop deploy` workflow. A dry run builds without publishing. Use `cantelop releases --json` to inspect component status and deployment errors, and wait for the selected release to become active before checking live endpoints.
 
-The deployment target created on September 19, 2026 is `cantelop-claude-api` (`app_ec792797727123ecb98676c7e98e7e73`). Check activation with `npx cantelop releases`; submitting a deployment does not by itself mean it is live.
-
-For deployment diagnostics, use `cantelop releases --json` to inspect each component's status, attempts, and error code. Release v1's API succeeded, but its Session runtime failed with `provider_materialization_timeout` after 100 attempts. CLI 0.8.3 adds `cantelop deploy restart --release RELEASE_ID`, which reuses uploaded artifacts after provider cancellation completes and automatically creates a replacement release. Wait for that replacement to become active before checking the live endpoints; a `cancelling` response only acknowledges the restart request.
-
-Initial owner access uses a dedicated ES256 signing key, issuer `cantelop-claude-api-owner`, and audience `cantelop-claude-api`. Only the public verification settings are configured in Cantelop. On the machine that created this deployment, `.cantelop/deployment-auth/signing-key.pem` holds the private key and `.cantelop/deployment-auth/owner-token.txt` holds the initial bearer token (expires September 20, 2026 at 20:09:59 UTC). These files have owner-only permissions and are excluded from Git and Docker builds. Paste the token into `/login` once the release is active. The token authenticates the local owner identity; Claude subscription authentication still uses the native login flow. This initial access setup is not a multi-user identity provider. Keep the key secure and issue a fresh token or configure your identity provider when the initial token expires.
+Choose an application name, issuer, and audience for your own deployment. Configure only the public ES256 verification JWK in Cantelop; keep signing keys and bearer tokens outside the repository and runtime environment. A bootstrap token can provide initial operator access, but production deployments should use their own multi-user identity provider, expiration policy, and key-rotation process. Application authentication remains separate from each user's native Claude subscription authentication.
 
 Before production: integrate your identity issuer and key rotation/revocation strategy, add user quotas and admission/rate limits, and define Workspace retention/backup/deletion policies. Review network access for your MCP services under Cantelop's sandbox policy. Do not place shared provider credentials or application signing keys in App environment variables visible to native Sessions.
 

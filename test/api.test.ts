@@ -110,8 +110,8 @@ test('login page is self-contained with restrictive CSP and no token persistence
 
 test('execution settings dispatch with MCPs and reject invalid values before opening a session', async () => {
   const f = fixture();
-  const settings = {model:'claude-sonnet-5',systemPrompt:'Canvas rules 😀',maxTurns:24,tools:[],
-    allowedTools:['mcp__doop__*'],mcps:{doop:{type:'http',url:'https://doop.example/mcp',headers:{Authorization:'Bearer run-token'}}}};
+  const settings = {model:'claude-sonnet-5',systemPrompt:'Project rules 😀',maxTurns:24,tools:[],
+    allowedTools:['mcp__project__*'],mcps:{project:{type:'http',url:'https://tools.example.com/mcp',headers:{Authorization:'Bearer session-token'}}}};
   assert.equal((await f.request('/v1/sessions',settings)).status,202);
   assert.deepEqual(f.dispatched[0],{type:'configure',config:settings});
   const count=f.opened.length;
