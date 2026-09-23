@@ -77,10 +77,8 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
   });
   route('POST', '/v1/auth/logout', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);
-    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS});
-    const reply = await session.request({type:'auth.logout'},{timeoutMs:45_000,signal:request.signal});
-    if (reply.type === 'auth.status' && !reply.authenticated) await session.stop();
-    return result(session.id,reply);
+    const session = app.sessions.open({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:0});
+    return result(session.id,await session.request({type:'auth.logout'},{timeoutMs:45_000,signal:request.signal}));
   });
   route('POST', '/v1/auth/complete', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);

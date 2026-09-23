@@ -21,7 +21,7 @@ function fixture(requestError?: Error, authReply: Reply = {type:'auth.status',au
     sessions:{open:(input: any) => {
       opened.push(input);
       return {...input,stop:async () => {
-          assert.ok(['auth.check','auth.logout'].includes(requested.at(-1)?.type ?? ''));stopped.push(input.id);if(stopError) throw stopError;
+          assert.equal(requested.at(-1)?.type,'auth.check');stopped.push(input.id);if(stopError) throw stopError;
         },dispatch:async (command: Command) => {dispatched.push(command);return {id:'receipt'};},
         request:async (command: Command, options: unknown) => {
           requested.push(command);requestOptions.push(options);
@@ -194,25 +194,21 @@ test('logout uses caller auth session and waits for native sign-out', async()=>{
   assert.equal(response.status,200);
   assert.equal((await response.json()).authenticated,false);
   assert.deepEqual(f.requested,[{type:'auth.logout'}]);
-  assert.deepEqual(f.stopped,[f.opened[0].id]);
+  assert.deepEqual(f.stopped,[]);
   assert.match(f.opened[0].id,/:auth$/);
+  assert.equal(f.opened[0].keepAliveSeconds,0);
   assert.equal((await f.request('/v1/auth/logout',{sessionId:'other:auth'})).status,400);
 });
 
-test('logout leaves the sandbox running unless native sign-out is confirmed',async()=>{
+test('logout always uses zero keep-alive while preserving native outcomes',async()=>{
   for(const reply of [{type:'auth.status',authenticated:true},{type:'error',code:'logout_failed'}] as Reply[]) {
     const f=fixture(undefined,undefined,undefined,reply);
-    assert.equal((await f.request('/v1/auth/logout',{})).status,200);assert.deepEqual(f.stopped,[]);
+    assert.equal((await f.request('/v1/auth/logout',{})).status,200);
+    assert.equal(f.opened[0].keepAliveSeconds,0);assert.deepEqual(f.stopped,[]);
   }
   const f=fixture(new RemoteAppError('request_wait_timeout',504));
-  assert.equal((await f.request('/v1/auth/logout',{})).status,504);assert.deepEqual(f.stopped,[]);
-});
-
-test('logout surfaces sandbox stop failures for retry',async()=>{
-  const f=fixture(undefined,undefined,new RemoteAppError('stop_failed',503));
-  const response=await f.request('/v1/auth/logout',{});assert.equal(response.status,503);
-  assert.deepEqual(await response.json(),{error:'Operation failed',code:'stop_failed'});
-  assert.equal(response.headers.get('cache-control'),'no-store');
+  assert.equal((await f.request('/v1/auth/logout',{})).status,504);
+  assert.equal(f.opened[0].keepAliveSeconds,0);assert.deepEqual(f.stopped,[]);
 });
 
 for (const path of ['/v1/auth','/v1/auth/complete']) {
