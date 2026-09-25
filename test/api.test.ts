@@ -235,3 +235,38 @@ for (const path of ['/v1/auth','/v1/auth/complete']) {
     assert.equal(response.headers.get('cache-control'),'no-store');
   });
 }
+
+function converging(failures: number) {
+  let workspaceFailures = failures, dispatchFailures = failures, requestFailures = failures;
+  const requestIds: (string | undefined)[] = [], notFound = (id?: string) => new RemoteAppError('resource_not_found',404,id);
+  const app = {
+    workspaces:{open:async ({slug}: any) => {if(workspaceFailures-->0) throw notFound();return {id:'ws-1',slug};}},
+    sessions:{open:(input: any) => ({...input,stop:async () => {},
+      dispatch:async () => {if(dispatchFailures-->0) throw notFound();return {id:'receipt'};},
+      request:async (_command: Command, options: any) => {
+        requestIds.push(options.id);
+        if(requestFailures-->0) throw notFound('request-1');
+        return {type:'auth.status',authenticated:false};
+      },
+      events:async () => new Response('',{headers:{'content-type':'text/event-stream'}})})}
+  } as unknown as CantelopApp<Command, Reply>;
+  const router = api.create({app,env});
+  const request = (path: string, body: unknown) => router.handle(new Request(`https://app.example${path}`,
+    {method:'POST',headers:{authorization:`Bearer ${token()}`},body:JSON.stringify(body)}));
+  return {request,requestIds};
+}
+
+test('fresh Workspace resource_not_found is absorbed and requests retry under the same identity',async()=>{
+  const f=converging(2);
+  const status=await f.request('/v1/auth',{});
+  assert.equal(status.status,200);assert.equal((await status.json()).authenticated,false);
+  assert.deepEqual(f.requestIds,[undefined,'request-1','request-1']);
+  assert.equal((await f.request('/v1/sessions',{})).status,202);
+});
+
+test('persistent resource_not_found is returned after bounded retries',async()=>{
+  const f=converging(Infinity);
+  const response=await f.request('/v1/sessions',{});
+  assert.equal(response.status,404);
+  assert.deepEqual(await response.json(),{error:'Operation failed',code:'resource_not_found'});
+});
