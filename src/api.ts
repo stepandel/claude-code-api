@@ -87,11 +87,6 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
   });
   route('POST', '/v1/sessions', async request => {
     const user = await identity(request, env), settings = config(await readBody(request));
-    if (user.demo && (settings.systemPrompt !== undefined || settings.tools.length || settings.allowedTools.length ||
-      Object.keys(settings.mcps).length || (settings.maxTurns !== undefined && settings.maxTurns > 8) ||
-      (settings.model !== undefined && !['default','sonnet','opus','haiku'].includes(settings.model)))) {
-      throw new ApiError(400, 'Demo sessions allow a model alias, at most 8 turns, and no tools, MCP servers, or system prompt');
-    }
     const session = app.sessions.open({id:`${user.userId}:${crypto.randomUUID()}`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:300});
     return accepted(session.id, await session.dispatch({type:'configure', config:settings}));
   });

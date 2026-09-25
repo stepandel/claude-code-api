@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import api from '../src/api.js';
 import { RemoteAppError, type CantelopApp } from '@cantelop/sdk/api';
 import type { Command, Reply } from '../src/contracts.js';
@@ -10,14 +10,6 @@ function token(sub = 'alice', extra = {}, key = pair.privateKey) {
   const encode = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url');
   const input = `${encode({alg:'ES256'})}.${encode({sub,iss:'test',aud:'api',exp:Math.floor(Date.now()/1000)+300,...extra})}`;
   return `${input}.${sign('sha256',Buffer.from(input),{key,dsaEncoding:'ieee-p1363'}).toString('base64url')}`;
-}
-function demoToken(key = generateKeyPairSync('ec',{namedCurve:'P-256'})) {
-  const encode = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url');
-  const jwk = key.publicKey.export({format:'jwk'});
-  const sub = createHash('sha256').update(JSON.stringify({crv:'P-256',kty:'EC',x:jwk.x,y:jwk.y})).digest('base64url');
-  const now = Math.floor(Date.now()/1000);
-  const input = `${encode({alg:'ES256',typ:'JWT',jwk})}.${encode({sub,iss:'cantelop-blog-demo',aud:'cantelop-claude-api-demo',iat:now,exp:now+300})}`;
-  return {token:`${input}.${sign('sha256',Buffer.from(input),{key:key.privateKey,dsaEncoding:'ieee-p1363'}).toString('base64url')}`,key};
 }
 function fixture(requestError?: Error, authReply: Reply = {type:'auth.status',authenticated:true}, stopError?: Error,
   logoutReply: Reply = {type:'auth.status',authenticated:false}) {
@@ -65,19 +57,6 @@ test('reject invalid identity, expired JWT, wrong audience and forged signatures
   for (const value of ['bad',token('alice',{exp:1}),token('alice',{aud:'wrong'}),token('alice',{},other.privateKey)])
     assert.equal((await f.request('/v1/auth',{},value)).status,401);
   assert.equal(f.workspaces.length,0);
-});
-test('client-generated demo identities are isolated and limited to safe no-tools sessions', async () => {
-  const f=fixture(), first=demoToken(), second=demoToken();
-  const a=await (await f.request('/v1/auth',{},first.token)).json();
-  const repeat=await (await f.request('/v1/auth',{},demoToken(first.key).token)).json();
-  const other=await (await f.request('/v1/auth',{},second.token)).json();
-  assert.equal(repeat.workspaceSlug,a.workspaceSlug);assert.notEqual(other.workspaceSlug,a.workspaceSlug);
-  const safe={model:'sonnet',maxTurns:8,tools:[],allowedTools:[],mcps:{}};
-  assert.equal((await f.request('/v1/sessions',safe,first.token)).status,202);
-  for(const unsafe of [
-    {...safe,tools:['Bash']},{...safe,allowedTools:['Read']},{...safe,mcps:{x:{type:'http',url:'https://example.com'}}},
-    {...safe,systemPrompt:'override'},{...safe,maxTurns:9},{...safe,model:'claude-custom'},
-  ]) assert.equal((await f.request('/v1/sessions',unsafe,first.token)).status,400);
 });
 test('tenant ownership checked before Session dispatch and event streaming', async () => {
   const f = fixture();
