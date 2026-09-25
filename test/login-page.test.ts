@@ -33,7 +33,8 @@ test('compiled login page completes encrypted native terminal flow with app bear
   elements.get('token')!.value=`${claims}.${sign('sha256',Buffer.from(claims),{key:issuer.privateKey,dsaEncoding:'ieee-p1363'}).toString('base64url')}`;
   let authenticated=false,active=false,stream:ReadableStreamDefaultController<Uint8Array>|undefined,finish!:(code:number)=>void,sequence=0,stopped=0;
   const commands:Command[]=[],events:any[]=[],written:string[]=[],eventRequests:Request[]=[];
-  const output={send:async(event:any)=>{events.push(event);stream?.enqueue(new TextEncoder().encode(`id: test:${++sequence}\ndata: ${JSON.stringify({...event,sequence})}\n\n`));}};
+  // Production delivery envelope (Cantelop gateway): the application event is nested under `data`.
+  const output={send:async(event:any)=>{events.push(event);++sequence;stream?.enqueue(new TextEncoder().encode(`id: test:${sequence}\ndata: ${JSON.stringify({stream_id:'test',sequence,session_id:'user:auth',message_id:crypto.randomUUID(),created_at:new Date().toISOString(),data:event})}\n\n`));}};
   const login=new Login(async()=>authenticated,(_signal,emit)=>{
     const done=new Promise<number>(r=>{finish=r;});
     void emit('Open \x1b]8;;https://claude.ai/oauth/authorize?test=1\x1b\\https://claude.ai/oauth/authorize?test=1\x1b]8;;\x1b\\\nEnter code:');

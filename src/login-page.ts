@@ -77,7 +77,8 @@ export function loginClient(createCrypto: typeof terminalCrypto) {
             const frame=buffer.slice(0,match.index);buffer=buffer.slice(match.index+match[0].length);
             const lines=frame.split(/\r?\n/), id=lines.find(line=>line.startsWith('id:'))?.slice(3).trim();
             const data=lines.filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
-            if(data) {try {await event(JSON.parse(data));} catch(error) {finished=true;throw error;}}
+            // Application events arrive in a delivery envelope under `data`; stream errors are bare `{code}` frames.
+            if(data) {try {const wire=JSON.parse(data);await event(wire&&typeof wire.data==='object'&&wire.data!==null?wire.data:wire);} catch(error) {finished=true;throw error;}}
             if(id) cursor=id;
           }
         }
