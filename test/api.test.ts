@@ -100,15 +100,6 @@ test('login bridge accepts only public keys and encrypted input scoped to caller
   assert.equal((await f.request('/v1/auth',{attemptId,publicKey:{...publicKey,d:'private'}})).status,400);
   assert.equal((await f.request('/v1/auth/input',{attemptId,sessionId:'other:auth',sequence:1,iv:'A'.repeat(16),data:'A'.repeat(24)})).status,400);
 });
-test('login page is self-contained with restrictive CSP and no token persistence',async()=>{
-  const f=fixture(),res=await f.request('/login',undefined,'');assert.equal(res.status,200);
-  const html=await res.text();assert.match(html,/Connect your Claude subscription/);
-  assert.match(res.headers.get('content-security-policy')!,/frame-ancestors 'none'/);
-  assert.match(res.headers.get('content-security-policy')!,/connect-src 'self'/);
-  assert.equal(res.headers.get('cache-control'),'no-store');assert.ok(!html.includes('localStorage'));assert.ok(!html.includes('sessionStorage'));
-  assert.match(html,/location\.hash/);
-});
-
 test('execution settings dispatch with MCPs and reject invalid values before opening a session', async () => {
   const f = fixture();
   const settings = {model:'claude-sonnet-5',systemPrompt:'Project rules 😀',maxTurns:24,tools:[],

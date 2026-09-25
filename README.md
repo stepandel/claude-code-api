@@ -22,7 +22,7 @@ Usage is billed according to the user's plan and Anthropic's current rules. Incl
 
 ## Quick start
 
-The quick start deploys the API and smoke-tests it with the built-in `/login` page. To put Claude sign-in and agent Sessions inside your own product, continue with [Embed in your application](#embed-in-your-application).
+The quick start deploys the API. To connect it to your product, continue with [Embed in your application](#embed-in-your-application).
 
 ### Prerequisites
 
@@ -105,9 +105,7 @@ Wait for the new release to become active before sending traffic. See the [Cante
 curl "$BASE_URL/health"   # {"ok":true}
 ```
 
-Then open `$BASE_URL/login` in a browser, paste an application JWT, and connect a Claude account. After that, follow the [example workflow](#example-workflow).
-
-The `/login` page is a standalone smoke-test and operator tool. It asks for a pasted token and runs on the API's origin, so it is not meant as the sign-in experience for your users.
+Then connect a Claude account with the [Claude authentication](#claude-authentication) protocol and follow the [example workflow](#example-workflow).
 
 Before production, also verify tenant isolation with at least two identities. Confirm that a fresh Sandbox reuses each user's Claude login from their Workspace.
 
@@ -148,7 +146,7 @@ This is safe because a subscription without a cursor replays the Session's retai
 
 ### Inline login
 
-Run the [programmatic login](#programmatic-login) protocol in your UI. `src/login-page.ts` and `src/terminal-crypto.ts` are a complete, dependency-free reference for the key exchange, encrypted frames, stream parsing, link extraction, code entry, cancellation, and completion.
+Run the [programmatic login](#programmatic-login) protocol. `src/terminal-crypto.ts` is the reference for the key exchange and frame encryption.
 
 ## API
 
@@ -164,7 +162,6 @@ The token must be ES256-signed with `sub`, `iss`, `aud`, and `exp` claims matchi
 | Method | Route | Body | Response |
 | --- | --- | --- | --- |
 | GET | `/health` | — | `200 {"ok":true}` (public) |
-| GET | `/login` | — | Claude login page (public page; its API calls are authenticated) |
 | POST | `/v1/auth` | `{}` for status, or a login handshake | `200` status, or `202` receipt |
 | POST | `/v1/auth/input` | Encrypted terminal frame | `202` receipt |
 | POST | `/v1/auth/cancel` | `{attemptId}` | `202` receipt |
@@ -299,19 +296,13 @@ This returns `{sessionId, type: "session.state", configured, messages, truncated
 
 ## Claude authentication
 
-### Login page
+The API runs the unmodified `claude auth login` in the user's auth Sandbox and relays its terminal. The user opens the Anthropic link it prints, signs in, and enters a completion code if the terminal asks for one. Success is confirmed with `claude auth status`.
 
-Open `/login` on the App's origin, enter an application JWT, and select **Connect Claude**. The page runs the unmodified `claude auth login` in the user's auth Sandbox. Open the Anthropic link it shows, sign in, and enter a completion code if the terminal asks for one. The page confirms success with `claude auth status`.
-
-Claude runs the OAuth exchange itself and stores its own credentials. The application implements no OAuth callback and never reads Claude's tokens.
-
-The page is a small line-oriented console, not a shell. It is driven by a Python standard-library PTY helper in the runtime image. Input echo is off, and an empty submission presses Enter. Terminal output is rendered as inert text, and only Anthropic-domain HTTPS links are clickable. It needs no external assets or frontend build.
+Claude runs the OAuth exchange itself and stores its own credentials. The application implements no OAuth callback and never reads Claude's tokens. The terminal is driven by a Python standard-library PTY helper in the runtime image, with input echo off. Render its output as inert text, and only link to Anthropic-domain HTTPS URLs.
 
 ### Programmatic login
 
-Clients can implement the same protocol. `src/login-page.ts` is a complete reference.
-
-1. `POST /v1/auth` with `{}` returns `{sessionId, …, type: "auth.status", authenticated}` along with Workspace identifiers and the `/login` URL.
+1. `POST /v1/auth` with `{}` returns `{sessionId, …, type: "auth.status", authenticated}` along with Workspace identifiers.
 2. Subscribe to `/v1/events?sessionId=…` **before** starting login. Behind a proxy, open the stream and send step 3 [concurrently](#subscribe-then-start-without-deadlocking).
 3. Generate an ephemeral ECDH P-256 key pair. `POST /v1/auth` with `{attemptId: "<uuid>", publicKey: <public JWK>}`. Private JWK fields are rejected. Add `force: true` to start a fresh login even if stale credentials still report signed in.
 4. `auth.started` returns the Session's public JWK and `expiresAt`. Derive the AES-GCM key as `src/terminal-crypto.ts` does. `auth.output` events carry `terminalSequence`, `iv`, and `data`. Their AAD is `<attemptId>:output:<terminalSequence>`.
@@ -386,7 +377,7 @@ A Session holds at most 1,000 messages. This is not a transactional database, an
 | `src/claude.ts` | Claude CLI subprocess, cancellation, stream parsing, tool/MCP settings, auth status |
 | `src/state.ts` | Durable Session state under `/workspace/.cantelop` |
 | `src/login.ts`, `src/login-process.ts`, `runtime/login-pty.py` | Native login lifecycle and PTY relay |
-| `src/login-page.ts`, `src/terminal-crypto.ts` | Login page and encrypted terminal transport |
+| `src/terminal-crypto.ts` | Encrypted terminal transport |
 | `cantelop.json`, `docker/Dockerfile` | App manifest and Session image |
 | `scripts/generate-auth-keys.mjs` | ES256 key pair for application tokens (`npm run keys`) |
 
@@ -396,7 +387,7 @@ The Dockerfile installs Claude Code **2.1.267** and verifies pinned SHA-256 chec
 
 ### Tests
 
-Tests exercise the real SDK route definitions, JWT and tenant checks, Session dispatch, queue/steer/cancel, durable reactivation, output fragmentation, and subprocess handling. They use fake Claude executables. The login tests drive a fake interactive CLI through the PTY and run the compiled login page against the real API handlers. No test calls a model or uses real credentials. A real sign-in and model turn require a user's own account.
+Tests exercise the real SDK route definitions, JWT and tenant checks, Session dispatch, queue/steer/cancel, durable reactivation, output fragmentation, and subprocess handling. They use fake Claude executables. The login tests drive a fake interactive CLI through the PTY. No test calls a model or uses real credentials. A real sign-in and model turn require a user's own account.
 
 ## Production checklist
 

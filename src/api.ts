@@ -1,6 +1,5 @@
 import { defineApi, RemoteAppError, type HttpMethod } from '@cantelop/sdk/api';
 import type { Command, Reply } from './contracts.js';
-import { loginPage } from './login-page.js';
 import { identity } from './auth.js';
 import { ApiError, config, fail, fields, readBody, uuid } from './validation.js';
 
@@ -66,7 +65,6 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
     if (reply.type === 'auth.status' && reply.authenticated) await session.stop();
     return reply;
   };
-  route('GET', '/login', async () => loginPage());
   route('GET', '/health', async () => Response.json({ok:true}));
   route('POST', '/v1/auth', async request => {
     const user = await identity(request, env);
@@ -83,7 +81,7 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
     }
     const workspace = await converge(request.signal, () => app.workspaces.open({slug:user.workspaceSlug}));
     const session = openSession({id:`${user.userId}:auth`, workspaceSlug:user.workspaceSlug, keepAliveSeconds:AUTH_KEEP_ALIVE_SECONDS}, request.signal);
-    const metadata = {workspaceId:workspace.id, workspaceSlug:workspace.slug, workspace:'/workspace',loginPage:'/login'};
+    const metadata = {workspaceId:workspace.id, workspaceSlug:workspace.slug, workspace:'/workspace'};
     if (start.type === 'auth.check') {
       return result(session.id, await checkAuth(session),metadata);
     }
