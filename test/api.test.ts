@@ -21,12 +21,14 @@ function fixture(requestError?: Error, authReply: Reply = {type:'auth.status',au
     sessions:{open:(input: any) => {
       opened.push(input);
       return {...input,stop:async () => {
-          assert.equal(requested.at(-1)?.type,'auth.check');stopped.push(input.id);if(stopError) throw stopError;
+          assert.ok(['auth.check','auth.code'].includes(requested.at(-1)?.type ?? ''));stopped.push(input.id);if(stopError) throw stopError;
         },dispatch:async (command: Command) => {dispatched.push(command);return {id:'receipt'};},
         request:async (command: Command, options: unknown) => {
           requested.push(command);requestOptions.push(options);
           if(requestError) throw requestError;
-          return command.type === 'auth.logout' ? logoutReply : command.type === 'auth.check' ? authReply :
+          if (command.type === 'auth.login') return {type:'auth.login',attemptId:crypto.randomUUID(),url:'https://claude.com/cai/oauth/authorize',expiresAt:1};
+          if (command.type === 'auth.cancel') return {type:'auth.cancelled',attemptId:command.attemptId};
+          return command.type === 'auth.logout' ? logoutReply : command.type === 'auth.check' || command.type === 'auth.code' ? authReply :
             {type:'session.state',configured:true,messages:[],truncated:false};
         },
         events:async (request: Request) => new Response(request.headers.get('Last-Event-ID'),{headers:{'content-type':'text/event-stream'}})};
@@ -77,7 +79,7 @@ test('queue, steer, cancel, auth checks and per-session MCP configurations dispa
   assert.equal(sent.receiptId,'receipt'); assert.ok(sent.messageId);
   await f.request('/v1/messages',{sessionId,text:'change direction',mode:'steer'});
   await f.request('/v1/cancel',{sessionId,messageId:sent.messageId});
-  await f.request('/v1/auth/complete',{});
+  await f.request('/v1/auth',{});
   assert.deepEqual(f.dispatched.map(m => m.type),['configure','queue','steer','cancel']);
   assert.deepEqual(f.requested,[{type:'auth.check'}]);
 });
@@ -89,26 +91,25 @@ test('reject credentials, invalid MCPs and oversized requests', async () => {
   assert.equal((await f.request('/v1/sessions',{tools:['--dangerously-skip-permissions']})).status,400);
   assert.equal((await f.request('/v1/auth',{data:'x'.repeat(50000)})).status,413);
 });
-test('login bridge accepts only public keys and encrypted input scoped to caller auth actor',async()=>{
-  const f=fixture(),publicKey=pair.publicKey.export({format:'jwk'}),attemptId=crypto.randomUUID();
-  const r=await f.request('/v1/auth',{attemptId,publicKey});assert.equal(r.status,202);
-  assert.equal(f.dispatched.at(-1)?.type,'auth.start');
-  assert.equal((await f.request('/v1/auth/input',{attemptId,code:'plaintext'})).status,400);
-  assert.equal((await f.request('/v1/auth/input',{attemptId,sequence:1,iv:'A'.repeat(16),data:'A'.repeat(24)})).status,202);
-  assert.match(f.opened.at(-1).id,/:auth$/);
-  assert.equal((await f.request('/v1/auth/cancel',{attemptId})).status,202);
-  assert.equal((await f.request('/v1/auth',{attemptId,publicKey:{...publicKey,d:'private'}})).status,400);
-  assert.equal((await f.request('/v1/auth/input',{attemptId,sessionId:'other:auth',sequence:1,iv:'A'.repeat(16),data:'A'.repeat(24)})).status,400);
+test('login endpoints validate input, reach only the caller auth actor, and map login failures to HTTP errors',async()=>{
+  const f=fixture(),attemptId=crypto.randomUUID();
+  const started=await f.request('/v1/auth/login',{});assert.equal(started.status,200);
+  assert.deepEqual(f.requested.at(-1),{type:'auth.login'});assert.match(f.opened.at(-1).id,/:auth$/);
+  assert.equal((await f.request('/v1/auth/login/code',{attemptId,code:'abc#def'})).status,200);
+  assert.deepEqual(f.requested.at(-1),{type:'auth.code',attemptId,code:'abc#def'});
+  for(const code of ['','with space','line\nbreak','tab\t','x'.repeat(2049),42])
+    assert.equal((await f.request('/v1/auth/login/code',{attemptId,code})).status,400);
+  assert.equal((await f.request('/v1/auth/login/code',{attemptId:'nope',code:'abc'})).status,400);
+  assert.equal((await f.request('/v1/auth/login/code',{attemptId,code:'abc',sessionId:'other:auth'})).status,400);
+  assert.equal((await f.request('/v1/auth/cancel',{attemptId})).status,200);
+  assert.deepEqual(f.requested.at(-1),{type:'auth.cancel',attemptId});
+  for(const path of ['/v1/auth/input','/v1/auth/complete']) assert.equal((await f.request(path,{})).status,404);
+  for(const [code,status] of [['login_not_active',409],['code_rejected',422],['login_failed',502],['login_timeout',504]] as const) {
+    const g=fixture(undefined,{type:'error',code});
+    const response=await g.request('/v1/auth/login/code',{attemptId,code:'abc'});
+    assert.equal(response.status,status);assert.equal((await response.json()).code,code);assert.deepEqual(g.stopped,[]);
+  }
 });
-test('login page is self-contained with restrictive CSP and no token persistence',async()=>{
-  const f=fixture(),res=await f.request('/login',undefined,'');assert.equal(res.status,200);
-  const html=await res.text();assert.match(html,/Connect your Claude subscription/);
-  assert.match(res.headers.get('content-security-policy')!,/frame-ancestors 'none'/);
-  assert.match(res.headers.get('content-security-policy')!,/connect-src 'self'/);
-  assert.equal(res.headers.get('cache-control'),'no-store');assert.ok(!html.includes('localStorage'));assert.ok(!html.includes('sessionStorage'));
-  assert.match(html,/location\.hash/);
-});
-
 test('execution settings dispatch with MCPs and reject invalid values before opening a session', async () => {
   const f = fixture();
   const settings = {model:'claude-sonnet-5',systemPrompt:'Project rules 😀',maxTurns:24,tools:[],
@@ -136,14 +137,13 @@ test('message UTF-8 limit allows larger context and preserves the encoded body l
 });
 
 test('all auth operations reuse the original session keep-alive contract', async () => {
-  const f=fixture(), attemptId=crypto.randomUUID(), publicKey=pair.publicKey.export({format:'jwk'});
+  const f=fixture(), attemptId=crypto.randomUUID();
   const auth=await (await f.request('/v1/auth',{})).json();
-  await f.request('/v1/auth',{attemptId,publicKey});
-  await f.request('/v1/auth/input',{attemptId,sequence:1,iv:'A'.repeat(16),data:'A'.repeat(24)});
+  await f.request('/v1/auth/login',{});
+  await f.request('/v1/auth/login/code',{attemptId,code:'abc'});
   await f.request('/v1/auth/cancel',{attemptId});
-  await f.request('/v1/auth/complete',{});
   await f.request(`/v1/events?sessionId=${auth.sessionId}`);
-  assert.equal(f.opened.length,6);
+  assert.equal(f.opened.length,5);
   for(const session of f.opened) {
     assert.equal(session.id,auth.sessionId);
     assert.equal(session.keepAliveSeconds,900);
@@ -153,18 +153,18 @@ test('all auth operations reuse the original session keep-alive contract', async
   assert.equal(f.opened.at(-1).keepAliveSeconds,300);
 });
 
-test('forced native re-login requires a valid terminal handshake', async () => {
-  const f=fixture(), attemptId=crypto.randomUUID(), publicKey=pair.publicKey.export({format:'jwk'});
+test('forced native re-login is an explicit boolean on the login endpoint', async () => {
+  const f=fixture();
   assert.equal((await f.request('/v1/auth',{force:true})).status,400);
-  assert.equal((await f.request('/v1/auth',{attemptId,publicKey,force:'yes'})).status,400);
-  assert.equal((await f.request('/v1/auth',{attemptId,publicKey,force:true})).status,202);
-  assert.equal((f.dispatched.at(-1) as {force?:boolean}).force,true);
+  assert.equal((await f.request('/v1/auth/login',{force:'yes'})).status,400);
+  assert.equal((await f.request('/v1/auth/login',{force:true})).status,200);
+  assert.deepEqual(f.requested.at(-1),{type:'auth.login',force:true});
 });
 
 test('status and snapshots return bounded replies without dispatch or an event subscription', async () => {
   const f=fixture();
   const sessionId=(await (await f.request('/v1/sessions',{})).json()).sessionId;
-  const status=await f.request('/v1/auth/complete',{});
+  const status=await f.request('/v1/auth',{});
   assert.equal(status.status,200);
   assert.equal((await status.json()).authenticated,true);
   const snapshot=await f.request('/v1/snapshot',{sessionId});
@@ -183,7 +183,7 @@ test('status and snapshots return bounded replies without dispatch or an event s
 
 test('request timeout remains a no-store gateway timeout without exposing internal error text',async()=>{
   const f=fixture(new RemoteAppError('request_wait_timeout',504));
-  const response=await f.request('/v1/auth/complete',{});
+  const response=await f.request('/v1/auth',{});
   assert.equal(response.status,504);
   assert.deepEqual(await response.json(),{error:'Operation failed',code:'request_wait_timeout'});
   assert.equal(response.headers.get('cache-control'),'no-store');
@@ -212,26 +212,61 @@ test('logout always uses zero keep-alive while preserving native outcomes',async
   assert.equal(f.opened[0].keepAliveSeconds,0);assert.deepEqual(f.stopped,[]);
 });
 
-for (const path of ['/v1/auth','/v1/auth/complete']) {
+for (const [path,body] of [['/v1/auth',{}],['/v1/auth/login/code',{attemptId:crypto.randomUUID(),code:'abc'}]] as const) {
   test(`${path} stops only the caller's authenticated sandbox after checking native auth`,async()=>{
-    const f=fixture(),response=await f.request(path,{});assert.equal(response.status,200);
+    const f=fixture(),response=await f.request(path,body);assert.equal(response.status,200);
     const reply=await response.json();assert.equal(reply.authenticated,true);
     assert.deepEqual(f.stopped,[reply.sessionId]);assert.match(reply.sessionId,/:auth$/);
-    assert.equal((await f.request(path,{},'invalid')).status,401);assert.equal(f.stopped.length,1);
+    assert.equal((await f.request(path,body,'invalid')).status,401);assert.equal(f.stopped.length,1);
   });
 
   test(`${path} leaves unauthenticated and unsuccessful checks running`,async()=>{
     for(const reply of [{type:'auth.status',authenticated:false},{type:'error',code:'auth_session_required'}] as Reply[]) {
-      const f=fixture(undefined,reply);assert.equal((await f.request(path,{})).status,200);assert.deepEqual(f.stopped,[]);
+      const f=fixture(undefined,reply);assert.equal((await f.request(path,body)).status,200);assert.deepEqual(f.stopped,[]);
     }
     const f=fixture(new RemoteAppError('request_wait_timeout',504));
-    assert.equal((await f.request(path,{})).status,504);assert.deepEqual(f.stopped,[]);
+    assert.equal((await f.request(path,body)).status,504);assert.deepEqual(f.stopped,[]);
   });
 
   test(`${path} surfaces sandbox stop failures for retry`,async()=>{
     const f=fixture(undefined,undefined,new RemoteAppError('stop_failed',503));
-    const response=await f.request(path,{});assert.equal(response.status,503);
+    const response=await f.request(path,body);assert.equal(response.status,503);
     assert.deepEqual(await response.json(),{error:'Operation failed',code:'stop_failed'});
     assert.equal(response.headers.get('cache-control'),'no-store');
   });
 }
+
+function converging(failures: number) {
+  let workspaceFailures = failures, dispatchFailures = failures, requestFailures = failures;
+  const requestIds: (string | undefined)[] = [], notFound = (id?: string) => new RemoteAppError('resource_not_found',404,id);
+  const app = {
+    workspaces:{open:async ({slug}: any) => {if(workspaceFailures-->0) throw notFound();return {id:'ws-1',slug};}},
+    sessions:{open:(input: any) => ({...input,stop:async () => {},
+      dispatch:async () => {if(dispatchFailures-->0) throw notFound();return {id:'receipt'};},
+      request:async (_command: Command, options: any) => {
+        requestIds.push(options.id);
+        if(requestFailures-->0) throw notFound('request-1');
+        return {type:'auth.status',authenticated:false};
+      },
+      events:async () => new Response('',{headers:{'content-type':'text/event-stream'}})})}
+  } as unknown as CantelopApp<Command, Reply>;
+  const router = api.create({app,env});
+  const request = (path: string, body: unknown) => router.handle(new Request(`https://app.example${path}`,
+    {method:'POST',headers:{authorization:`Bearer ${token()}`},body:JSON.stringify(body)}));
+  return {request,requestIds};
+}
+
+test('fresh Workspace resource_not_found is absorbed and requests retry under the same identity',async()=>{
+  const f=converging(2);
+  const status=await f.request('/v1/auth',{});
+  assert.equal(status.status,200);assert.equal((await status.json()).authenticated,false);
+  assert.deepEqual(f.requestIds,[undefined,'request-1','request-1']);
+  assert.equal((await f.request('/v1/sessions',{})).status,202);
+});
+
+test('persistent resource_not_found is returned after bounded retries',async()=>{
+  const f=converging(Infinity);
+  const response=await f.request('/v1/sessions',{});
+  assert.equal(response.status,404);
+  assert.deepEqual(await response.json(),{error:'Operation failed',code:'resource_not_found'});
+});

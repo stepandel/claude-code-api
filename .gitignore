@@ -3,4 +3,4 @@ node_modules/
 coverage/
 .dev/
 .cantelop/
-.vscode/
+.vscode/*.private.jwk.json

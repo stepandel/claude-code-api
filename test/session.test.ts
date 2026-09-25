@@ -122,13 +122,13 @@ test('SDK recovery restarts only pending work and preserves interrupted status',
   runtime.runs[0]!.resolve();await replacement.idle();
   assert.equal((await store.load()).messages.find(m=>m.id==='running')?.status,'interrupted');
 });
-test('auth Sandbox recovery requests a fresh handshake instead of replaying login',async t=>{
+test('auth Sandbox recovery neither replays nor restarts login',async t=>{
   const {root,runtime}=await fixture(t),events:Event[]=[];
   await createBehaviour(runtime,root).onRecover!({signal:new AbortController().signal,
     recovery:{id:'recovery',interruptedMessageId:'login'},session:{id:'tenant:auth',workspaceSlug:'user',keepAliveSeconds:300},
     env:{},output:{send:async e=>{events.push(e);}},send:()=>{throw new Error('must not replay auth');},
     activity:{active:false,start:()=>{throw new Error('must not restart login');},cancel:()=>false,extend:()=>{}}});
-  assert.deepEqual(events,[{type:'auth.reset'}]);assert.equal(runtime.runs.length,0);
+  assert.deepEqual(events,[]);assert.equal(runtime.runs.length,0);
 });
 
 test('terminal native auth failure emits auth.required for the affected message', async t => {
