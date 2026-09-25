@@ -10,20 +10,7 @@ That boundary follows Anthropic's conditions for [hosting Claude Code in a produ
 
 The central design separates durable user state from disposable compute:
 
-```mermaid
-flowchart LR
-    Client[Client] --> API[Cantelop Edge API]
-    API --> Identity[Verified application identity]
-    Identity --> Workspace[(One durable Workspace per user)]
-    API --> Auth[Auth Session Sandbox]
-    API --> S1[Agent Session Sandbox]
-    API --> S2[Concurrent Agent Session Sandbox]
-    Workspace --- Auth
-    Workspace --- S1
-    Workspace --- S2
-    Workspace --> Claude[.claude / native authentication state]
-    Workspace --> State[.cantelop / application session state]
-```
+![Cantelop Claude Code architecture](docs/architecture.png)
 
 - **One durable Workspace per user.** The API derives its Workspace slug from the verified application identity, so callers cannot select another user's Workspace. Claude Code writes its native authentication state beneath `/workspace/.claude`; application session state lives beneath `/workspace/.cantelop`.
 - **One ephemeral Sandbox per active Session.** Cantelop creates or reactivates the execution environment, mounts the user's Workspace at `/workspace`, and releases the Sandbox after work becomes idle or is explicitly stopped. Releasing a Sandbox does not remove the Workspace.
