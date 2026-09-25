@@ -11,21 +11,18 @@ export interface SessionConfig {
 }
 export type Command =
   | { type: 'auth.check' | 'auth.logout' | 'snapshot' | 'drain' }
-  | { type: 'auth.start'; attemptId: string; publicKey: JsonWebKey; force?: boolean }
-  | { type: 'auth.input'; attemptId: string; sequence: number; iv: string; data: string }
+  | { type: 'auth.login'; force?: boolean }
+  | { type: 'auth.code'; attemptId: string; code: string }
   | { type: 'auth.cancel'; attemptId: string }
   | { type: 'configure'; config: SessionConfig }
   | { type: 'queue' | 'steer'; id: string; text: string }
   | { type: 'cancel'; id: string };
 export type Status = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'steered' | 'interrupted';
 export interface Message { id: string; text: string; status: Status }
-export type Reply = Extract<Event, {type:'auth.status' | 'session.state' | 'error'}>;
+export type Reply = Extract<Event, {type:'auth.status' | 'session.state' | 'error'}>
+  | { type: 'auth.login'; attemptId: string; url: string; expiresAt: number }
+  | { type: 'auth.cancelled'; attemptId: string };
 export type Event =
-  | { type: 'auth.started'; attemptId: string; publicKey: JsonWebKey; expiresAt: number }
-  | { type: 'auth.output'; attemptId: string; terminalSequence: number; iv: string; data: string }
-  | { type: 'auth.finished'; attemptId: string; outcome: 'succeeded' | 'failed' | 'cancelled' | 'expired'; authenticated: boolean }
-  | { type: 'auth.error'; attemptId: string; code: string; activeAttemptId?: string }
-  | { type: 'auth.reset' }
   | { type: 'auth.required'; id: string }
   | { type: 'auth.status'; authenticated: boolean }
   | { type: 'session.ready'; sessionId: string }

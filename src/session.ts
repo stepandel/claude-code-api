@@ -109,7 +109,8 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
     },
     async onRecover(context) {
       await initialize(context.session.id);
-      if (context.session.id.endsWith(':auth')) { await context.output.send({type:'auth.reset'}); return; }
+      // Login attempts live in Sandbox memory; a recovered auth Session simply has none.
+      if (context.session.id.endsWith(':auth')) return;
       await context.output.send(snapshot());
       // The interrupted turn stays interrupted. Queued, not-yet-started work resumes.
       context.send({type:'drain'});
