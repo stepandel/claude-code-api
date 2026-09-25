@@ -12,12 +12,14 @@ export function loginClient(createCrypto: typeof terminalCrypto) {
   let pair:Awaited<ReturnType<ReturnType<typeof terminalCrypto>['generate']>>|undefined, key:CryptoKey|undefined;
   let connection:AbortController|undefined, finished=false, expiresAt=0, outputText='', connectionTask:Promise<void>|undefined;
   const seenLinks=new Set<string>();
+  const fragmentToken=new URLSearchParams(location.hash.slice(1)).get('token');
+  if(fragmentToken) {tokenInput.value=fragmentToken;element('token-field').hidden=true;history.replaceState(null,'',location.pathname+location.search);}
   const display=(text:string)=>{status.textContent=text;};
   const controls=(connected:boolean)=>{input.disabled=!connected;send.disabled=!connected;};
   const fail=(text:string)=>{display(text);controls(false);};
   async function post(path:string,body:unknown) {
     const response=await fetch(path,{method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'});
-    if(!response.ok) throw new Error(`Request failed (${response.status}). Check your application access token.`);
+    if(!response.ok) throw new Error(`Request failed (${response.status}). Restart the demo login.`);
     return response.json();
   }
   function render(text:string) {
@@ -63,7 +65,7 @@ export function loginClient(createCrypto: typeof terminalCrypto) {
       let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
       try {
         const response=await fetch(`/v1/events?sessionId=${encodeURIComponent(sessionId)}`,{headers:{Authorization:`Bearer ${token}`,...(cursor?{'Last-Event-ID':cursor}:{})},signal:controller.signal,cache:'no-store'});
-        if(!response.ok) {finished=true;throw new Error(`Event stream unavailable (${response.status}). Reconnect with a valid application token or restart the login.`);}
+        if(!response.ok) {finished=true;throw new Error(`Event stream unavailable (${response.status}). Restart the login.`);}
         reader=response.body!.getReader();onOpen();
         let buffer='';const decoder=new TextDecoder();
         while(!finished) {
@@ -135,7 +137,7 @@ export function loginPage():Response {
   return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Claude · Cantelop</title>
 <style nonce="${nonce}">*{box-sizing:border-box}body{font:16px system-ui,sans-serif;background:#f7f7f3;color:#252924;margin:0;padding:40px 20px}main{max-width:760px;margin:auto}h1{font-size:32px;letter-spacing:-1px}p{line-height:1.6;color:#596157}label{display:block;margin:16px 0 6px}input{width:100%;padding:12px;border:1px solid #b8c1b3;border-radius:6px;font:inherit}button{padding:11px 18px;background:#254b38;color:white;border:0;border-radius:6px;font:inherit;cursor:pointer;margin:12px 8px 12px 0}button:disabled{opacity:.45;cursor:default}#cancel{background:#626862}pre{background:#18221b;color:#e2efdf;min-height:200px;max-height:400px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:20px;border-radius:8px;font:13px/1.6 monospace}a{display:block;color:#255d3d;margin:12px 0}#status{min-height:26px;font-weight:600}small{color:#596157}</style>
 <main><small>CANTELOP</small><h1>Connect your Claude subscription</h1><p>This opens Claude Code’s native login in your private workspace. Sign in on Anthropic’s website, then follow the terminal prompts below.</p>
-<form id="connect"><label for="token">Application access token</label><input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Token from your application’s sign-in"><button id="start">Connect Claude</button><button id="cancel" type="button" disabled>Cancel login</button></form>
+<form id="connect"><div id="token-field"><label for="token">Application access token</label><input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Token from your application’s sign-in"></div><button id="start">Connect Claude</button><button id="cancel" type="button" disabled>Cancel login</button></form>
 <p id="status" role="status" aria-live="polite">Ready to connect.</p><div id="links"></div><pre id="terminal" aria-label="Claude Code login output"></pre>
 <form id="terminal-input"><label for="input">Terminal input</label><input id="input" type="password" autocomplete="off" spellcheck="false" maxlength="2048" disabled aria-describedby="input-help"><small id="input-help">Only enter a code or response when Claude’s terminal requests it. Send an empty response to press Enter.</small><br><button id="send" disabled>Send to Claude</button></form>
 <p><small>Login attempts expire after ten minutes. Keep this page open: temporary terminal keys are discarded when it closes. Browser reconnection works while this page remains open.</small></p></main>

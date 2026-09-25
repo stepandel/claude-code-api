@@ -12,7 +12,7 @@ import { Login } from '../src/login.js';
 import type { Command } from '../src/contracts.js';
 const until=async(predicate:()=>boolean)=>{const end=Date.now()+3000;while(!predicate()){if(Date.now()>end)throw new Error('Timeout');await new Promise(r=>setTimeout(r,5));}};
 class Element {
-  value='';textContent='';disabled=false;scrollTop=0;scrollHeight=100;href='';target='';rel='';
+  value='';textContent='';disabled=false;hidden=false;scrollTop=0;scrollHeight=100;href='';target='';rel='';
   children:Element[]=[];listeners=new Map<string,(e:any)=>unknown>();
   addEventListener(name:string,fn:(e:any)=>unknown){this.listeners.set(name,fn);}
   append(element:Element){this.children.push(element);}
@@ -27,7 +27,7 @@ test('compiled login page completes encrypted native terminal flow with app bear
   const html=await (await worker.fetch(new Request('https://app.example/login'))).text();
   const script=/<script[^>]*>([\s\S]*)<\/script>/.exec(html)![1]!;
   const elements=new Map<string,Element>();
-  for(const id of ['token','input','start','cancel','send','status','terminal','links','connect','terminal-input'])elements.set(id,new Element());
+  for(const id of ['token','token-field','input','start','cancel','send','status','terminal','links','connect','terminal-input'])elements.set(id,new Element());
   const issuer=generateKeyPairSync('ec',{namedCurve:'P-256'}),encode=(v:unknown)=>Buffer.from(JSON.stringify(v)).toString('base64url');
   const claims=`${encode({alg:'ES256'})}.${encode({sub:'browser-user',iss:'test',aud:'test',exp:Math.floor(Date.now()/1000)+60})}`;
   elements.get('token')!.value=`${claims}.${sign('sha256',Buffer.from(claims),{key:issuer.privateKey,dsaEncoding:'ieee-p1363'}).toString('base64url')}`;
@@ -55,8 +55,9 @@ test('compiled login page completes encrypted native terminal flow with app bear
   })}};
   const router=api.create({app,env:{AUTH_PUBLIC_JWK:JSON.stringify(issuer.publicKey.export({format:'jwk'})),AUTH_ISSUER:'test',AUTH_AUDIENCE:'test'}});
   const timers=new Set<ReturnType<typeof setTimeout>>();t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  new Script(script).runInNewContext({crypto,clearTimeout,TextEncoder,TextDecoder,URL,AbortController,btoa,atob,
+  new Script(script).runInNewContext({crypto,clearTimeout,TextEncoder,TextDecoder,URL,URLSearchParams,AbortController,btoa,atob,
     document:{getElementById:(id:string)=>elements.get(id),createElement:()=>new Element()},window:{addEventListener:()=>{}},
+    location:{hash:'',pathname:'/login',search:''},history:{replaceState:()=>{}},
     setTimeout:(fn:()=>void,ms:number)=>{const timer=setTimeout(fn,ms);timers.add(timer);return timer;},
     fetch:(path:string,init:any)=>router.handle(new Request(new URL(path,'https://app.example'),init))});
   await elements.get('connect')!.fire('submit');
