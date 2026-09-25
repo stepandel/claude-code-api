@@ -36,7 +36,6 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
       if (activity.signal.aborted) abort();
       try {
         await status(activity.output,message);
-        if (!await runtime.authenticated()) throw new NativeAuthRequired();
         await runtime.run({config:state!.config!,conversationId:state!.conversationId,resume:state!.resume,
           text:message.text,signal:controller.signal,
           initialized:async () => { state!.resume = true; await save(); },
@@ -51,7 +50,8 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
         message.status = current.outcome ?? 'completed';
       } catch (error) {
         message.status = current.outcome ?? 'failed';
-        if (!controller.signal.aborted && error instanceof NativeAuthRequired)
+        // Checking sign-in costs a full CLI start, so only do it once a turn has failed.
+        if (!controller.signal.aborted && (error instanceof NativeAuthRequired || !await runtime.authenticated().catch(() => true)))
           await activity.output.send({type:'auth.required',id:message.id});
       }
       finally {

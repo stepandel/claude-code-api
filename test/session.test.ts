@@ -90,11 +90,11 @@ test('durable configuration survives reactivation; interrupted work is not repla
   assert.equal(runtime.runs[0]!.turn.config.systemPrompt,'Persisted rules');
   runtime.runs[0]!.resolve();await replacement.idle();
 });
-test('unauthenticated native runtime fails turn without starting Claude',async t => {
-  const {runtime,h} = await fixture(t);runtime.signedIn = false;
-  await h.send({type:'auth.check'});await h.send({type:'queue',id:'a',text:'a'});await h.idle();
-  assert.equal(runtime.runs.length,0);
-  assert.ok(h.replies.some(e=>e.type==='error'&&e.code==='auth_session_required'));
+test('signed-out failure emits auth.required without a pre-turn auth check',async t => {
+  const {runtime,h} = await fixture(t);
+  await h.send({type:'queue',id:'a',text:'a'});await until(()=>runtime.runs.length===1);
+  runtime.signedIn = false;runtime.runs[0]!.reject(new Error('Claude turn failed'));await h.idle();
+  assert.ok(h.events.some(e=>e.type==='auth.required'&&e.id==='a'));
   assert.ok(h.events.some(e=>e.type==='message.status'&&e.status==='failed'));
 });
 test('large Claude events are fragmented within SDK output size limit',async t => {

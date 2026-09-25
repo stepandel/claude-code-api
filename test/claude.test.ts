@@ -49,6 +49,7 @@ test('native process-group cancellation escalates and waits for stubborn tool de
 test('CLI flags retain explicit tools and MCPs, no shared credentials inherited',()=>{
   const args=cliArgs(config,'id',true);
   assert.ok(args.includes('--strict-mcp-config'));assert.ok(args.includes('--resume'));
+  assert.ok(args.includes('--include-partial-messages'));
   assert.ok(!args.includes('--dangerously-skip-permissions'));
   process.env.ANTHROPIC_API_KEY='must-not-be-inherited';
   try {

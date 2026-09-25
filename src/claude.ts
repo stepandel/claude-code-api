@@ -16,7 +16,7 @@ export function claudeEnv(workspace: string): NodeJS.ProcessEnv {
   return env;
 }
 export function cliArgs(config: SessionConfig, conversationId: string, resume: boolean, systemPromptPath?: string): string[] {
-  return ['-p','--output-format','stream-json','--verbose','--permission-mode','dontAsk',
+  return ['-p','--output-format','stream-json','--verbose','--include-partial-messages','--permission-mode','dontAsk',
     '--setting-sources','', '--tools',config.tools.join(','), '--strict-mcp-config',
     '--mcp-config',JSON.stringify({mcpServers:config.mcps}),
     ...(config.allowedTools.length ? ['--allowedTools', config.allowedTools.join(',')] : []),
