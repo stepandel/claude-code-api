@@ -22,6 +22,8 @@ Usage is billed according to the user's plan and Anthropic's current rules. Incl
 
 ## Quick start
 
+The quick start deploys the API and smoke-tests it with the built-in `/login` page. To put Claude sign-in and agent Sessions inside your own product, continue with [Embed in your application](#embed-in-your-application).
+
 ### Prerequisites
 
 - Node.js 22+, Bun, and Docker with `linux/amd64` support
@@ -33,7 +35,7 @@ Usage is billed according to the user's plan and Anthropic's current rules. Incl
   curl -fsSL https://console.cantelop.dev/install.sh | sh
   ```
 
-- An identity provider that issues ES256 JWTs for your users. This project does not issue application tokens.
+- A server that signs ES256 JWTs for your users, such as your identity provider or your own backend. This API only verifies tokens; it never issues them. See [Application tokens](#application-tokens).
 
 ### 1. Clone and configure
 
@@ -97,7 +99,47 @@ curl "$BASE_URL/health"   # {"ok":true}
 
 Then open `$BASE_URL/login` in a browser, paste an application JWT, and connect a Claude account. After that, follow the [example workflow](#example-workflow).
 
+The `/login` page is a standalone smoke-test and operator tool. It asks for a pasted token and runs on the API's origin, so it is not meant as the sign-in experience for your users.
+
 Before production, also verify tenant isolation with at least two identities. Confirm that a fresh Sandbox reuses each user's Claude login from their Workspace.
+
+## Embed in your application
+
+An embedded integration has three parts: your backend mints application tokens, a same-origin backend adapter forwards API calls and the event stream, and your UI runs the encrypted login protocol inline.
+
+### Application tokens
+
+Tokens must be signed on your server. A token signed in the browser lets anyone forge any identity, because the signing key would ship to every visitor. The API stores only the public JWK (`AUTH_PUBLIC_JWK`).
+
+- Algorithm `ES256` (P-256). Claims `sub`, `iss`, `aud`, and `exp` are required, and `nbf` is optional.
+- `sub` selects the user's Workspace. Use a stable, non-reusable user ID. For anonymous demos, mint a random ID on the server and bind it to the visitor's session.
+- **Lifetime: at least 15 minutes for interactive login.** A login attempt can last 10 minutes, and the same token is used for terminal input, completion, and every stream reconnect. Alternatively, refresh the token and use the new one for later calls.
+- Keep the private key in your backend's secret store. Never put it in this App's environment, because Sessions can read App environment variables.
+
+### Backend adapter
+
+Browser `EventSource` and `WebSocket` cannot set an `Authorization` header, and the bearer token should not be exposed to page scripts that do not need it. Put a thin same-origin adapter in your backend:
+
+- **Requests:** accept an allow-listed action from the browser, validate its body, attach the user's token, and `POST` to the matching `/v1/*` route. Do not forward arbitrary paths.
+- **Events:** proxy `GET /v1/events?sessionId=…` with the token attached. Stream the body through without buffering: set `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`, and forward the browser's `Last-Event-ID` header so reconnects resume.
+- Check the request origin on the adapter, and validate `sessionId` before forwarding. The API also checks Session ownership on every call.
+
+### Subscribe, then start, without deadlocking
+
+Subscribe to events before dispatching login or messages so no events are missed. Behind a proxy, however, the stream's `fetch` may not resolve until the first bytes arrive, and those bytes may only exist after you dispatch. Open the stream and dispatch concurrently, then read the stream:
+
+```ts
+const [stream] = await Promise.all([
+  fetch(`/api/claude/events?sessionId=${sessionId}`, {cache: 'no-store', signal}),
+  post('authStart', {attemptId, publicKey}),
+]);
+```
+
+This is safe because a subscription without a cursor replays the Session's retained events from the beginning, so events emitted just before it attaches are still delivered. Replay is bounded, so open the stream promptly.
+
+### Inline login
+
+Run the [programmatic login](#programmatic-login) protocol in your UI. `src/login-page.ts` and `src/terminal-crypto.ts` are a complete, dependency-free reference for the key exchange, encrypted frames, stream parsing, link extraction, code entry, cancellation, and completion.
 
 ## API
 
@@ -126,6 +168,8 @@ The token must be ES256-signed with `sub`, `iss`, `aud`, and `exp` claims matchi
 | GET | `/v1/events?sessionId=…` | — | SSE or WebSocket event stream |
 
 **Synchronous vs. asynchronous.** Auth status, auth completion, logout, and snapshots return their result directly with HTTP 200. They wait up to 30 seconds (45 for logout), then return `504` with `code: "request_wait_timeout"`. A timeout stops the wait, not the work, and these calls are safe to repeat. Everything else returns `202` and reports outcomes as events.
+
+**Errors.** Failures return a JSON body with `error` and, for platform failures, a machine-readable `code`. See [Error reference](#error-reference).
 
 **Limits.** POST bodies are capped at 48 KiB of encoded JSON. Message text and system prompts are capped at 32 KiB of UTF-8. Fetch larger context through MCP, or split the work across messages.
 
@@ -211,7 +255,23 @@ Finished messages are unaffected. Tool effects that already completed cannot be 
 
 ### Events
 
-`/v1/events` returns SDK-native SSE. WebSocket clients use the `cantelop.events.v1` subprotocol. Browser `EventSource` and `WebSocket` cannot set an `Authorization` header, so browser integrations need a same-origin backend or cookie adapter.
+`/v1/events` returns SDK-native SSE. WebSocket clients use the `cantelop.events.v1` subprotocol. Browser `EventSource` and `WebSocket` cannot set an `Authorization` header, so browser integrations need a [backend adapter](#backend-adapter).
+
+Each application event arrives inside a Cantelop delivery envelope. **Read the event from `data`:**
+
+```
+id: <stream_id>:<sequence>
+data: {"stream_id":"…","sequence":7,"session_id":"…","message_id":"…","created_at":"…","data":{"type":"auth.started",…}}
+```
+
+Stream errors are not wrapped. They arrive as `event: error` frames with a bare code, after which the server closes the stream:
+
+```
+event: error
+data: {"code":"event_stream_reset"}
+```
+
+`event_stream_reset` and `event_cursor_expired` mean replay cannot continue: fetch a snapshot, and restart any login attempt. `event_broker_unavailable` is transient, so reconnect with `Last-Event-ID`.
 
 - Replay is bounded. Resume with `Last-Event-ID`, or with the `stream_id`/`after` query parameters.
 - Claude output arrives as `claude` events. Large frames are split into `claude.fragment` events: concatenate `json` by `eventId` and `index`, then parse once all `total` fragments arrive.
@@ -243,7 +303,7 @@ The page is a small line-oriented console, not a shell. It is driven by a Python
 Clients can implement the same protocol. `src/login-page.ts` is a complete reference.
 
 1. `POST /v1/auth` with `{}` returns `{sessionId, …, type: "auth.status", authenticated}` along with Workspace identifiers and the `/login` URL.
-2. Subscribe to `/v1/events?sessionId=…` **before** starting login.
+2. Subscribe to `/v1/events?sessionId=…` **before** starting login. Behind a proxy, open the stream and send step 3 [concurrently](#subscribe-then-start-without-deadlocking).
 3. Generate an ephemeral ECDH P-256 key pair. `POST /v1/auth` with `{attemptId: "<uuid>", publicKey: <public JWK>}`. Private JWK fields are rejected. Add `force: true` to start a fresh login even if stale credentials still report signed in.
 4. `auth.started` returns the Session's public JWK and `expiresAt`. Derive the AES-GCM key as `src/terminal-crypto.ts` does. `auth.output` events carry `terminalSequence`, `iv`, and `data`. Their AAD is `<attemptId>:output:<terminalSequence>`.
 5. Send input to `POST /v1/auth/input` as `{attemptId, sequence, iv, data}`. `sequence` starts at 1, and the AAD is `<attemptId>:input:<sequence>`. Use a random 12-byte IV and standard base64. Frames are limited to 4 KiB each and 32 KiB per attempt. Duplicate sequences are ignored and gaps are rejected.
@@ -268,6 +328,33 @@ When a client receives `auth.required`, it should pause new work for that user a
 ### Sign-out
 
 `POST /v1/auth/logout` cancels any pending login, runs `claude auth logout`, and confirms signed-out status. Only then does it return `{sessionId, type: "auth.status", authenticated: false}`. The auth Sandbox is released as soon as it is idle. Workspace files and conversations are kept. Stop the user's agent tasks first. A timeout does not confirm sign-out, so retry it.
+
+## Error reference
+
+HTTP errors return `{"error": "<message>"}` for request validation, and `{"error": "Operation failed", "code": "<code>"}` for platform failures. The message is intentionally generic. Branch on the status and `code`.
+
+| Status | Code or message | Meaning | Retry? |
+| --- | --- | --- | --- |
+| 400 | Validation message | Malformed body, unknown field, or invalid value | No, fix the request |
+| 401 | `Valid application bearer token required` | Missing, expired, or invalid JWT | After minting a new token |
+| 404 | `Session not found` | The Session ID does not belong to the caller | No |
+| 404 | `resource_not_found` | Platform resource missing. Fresh-Workspace races are retried inside the API first | Yes, with backoff |
+| 413 | `Request too large` | Body over 48 KiB | No |
+| 503 | `Application identity is not configured` | `AUTH_*` variables are missing | After fixing configuration |
+| 504 | `request_wait_timeout` | A synchronous call stopped waiting; the work may still finish | Yes, calls are idempotent |
+| 502/503 | `stop_failed`, other platform codes | Transient platform failure | Yes, with backoff |
+| 502 | `request_outcome_unknown` | The platform result could not be read | Yes, calls are idempotent |
+
+Session commands are asynchronous, so their failures arrive as events:
+
+| Event | Code | Meaning |
+| --- | --- | --- |
+| `error` | `session_not_configured`, `already_configured` | Session used before `configure`, or configured twice |
+| `error` | `message_not_found`, `message_id_conflict`, `session_full` | Bad cancel target, reused `messageId` with different text, or 1,000-message limit |
+| `error` | `agent_session_required`, `auth_session_required` | Command sent to the wrong Session kind |
+| `auth.error` | `login_busy` | Another attempt is active. `activeAttemptId` identifies it when known; cancel it and start again |
+| `auth.error` | `login_not_active`, `input_not_ready`, `input_rejected`, `invalid_public_key` | Input for a stale attempt, before `auth.started`, undecryptable, or an invalid key |
+| `auth.required` | — | Claude credentials are missing or expired; offer sign-in |
 
 ## Queueing and durability
 
@@ -303,6 +390,8 @@ Tests exercise the real SDK route definitions, JWT and tenant checks, Session di
 
 ## Production checklist
 
+- [ ] Mint application tokens on your server with a lifetime of at least 15 minutes for interactive login (see [Application tokens](#application-tokens)).
+- [ ] Serve the event stream through an unbuffered same-origin adapter that forwards `Last-Event-ID`.
 - [ ] Use your own identity provider with expiry, key rotation, and revocation. Put only the public JWK in Cantelop. Keep signing keys and tokens out of the repo and runtime environment.
 - [ ] Choose your own App slug, issuer, and audience.
 - [ ] Add per-user quotas, admission control, and rate limits.
