@@ -1,78 +1,62 @@
 # Cantelop Claude Code API
 
-A **Cantelop SDK application** with an Edge API and a native Session behaviour. Uses `@cantelop/sdk@0.12.0`: Cantelop allocates Sandboxes, mounts durable per-user Workspaces, serializes actor messages, supervises activities, and transports output through SSE/WebSockets. Claude Code runs as Anthropic's unmodified native executable inside the Sandbox.
+An HTTP API for running Claude Code on behalf of your users, built on [Cantelop](https://console.cantelop.dev/docs) with `@cantelop/sdk@0.12.0`.
 
-## Architectural overview
+Each user signs in to Claude Code with **their own** Claude subscription through Claude Code's native login. Your application only verifies who the user is. It never sees, stores, or proxies Claude credentials. Claude Code runs as Anthropic's unmodified native binary inside a Cantelop Sandbox.
 
-This repository is a reference implementation for self-managed Claude Code hosting on Cantelop. It does not modify the Claude Code binary, harness, or built-in authentication methods. Each end user signs in through Claude Code's native Anthropic flow with their own Claude subscription or provider credentials; the application does not collect, proxy, or resell those credentials or the resulting model usage.
-
-That boundary follows Anthropic's conditions for [hosting Claude Code in a product](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products): run the published binary unchanged, preserve every built-in authentication method, and have each user authenticate and pay under their own Anthropic or inference-provider agreement. It also preserves native subscription authentication instead of injecting an `ANTHROPIC_API_KEY`. Billing still follows the user's plan and Anthropic's current rules: included limits, Agent SDK or `claude -p` credits, and any separately enabled usage credits may apply. This project does not guarantee that a run will never consume usage credits.
-
-The central design separates durable user state from disposable compute:
+## How it works
 
 ![Cantelop Claude Code architecture](docs/architecture.png)
 
-- **One durable Workspace per user.** The API derives its Workspace slug from the verified application identity, so callers cannot select another user's Workspace. Claude Code writes its native authentication state beneath `/workspace/.claude`; application session state lives beneath `/workspace/.cantelop`.
-- **One ephemeral Sandbox per active Session.** Cantelop creates or reactivates the execution environment, mounts the user's Workspace at `/workspace`, and releases the Sandbox after work becomes idle or is explicitly stopped. Releasing a Sandbox does not remove the Workspace.
-- **Native authentication survives Sandbox replacement.** A later Session mounts the same Workspace and Claude Code reads the authentication state it previously wrote. The application points `CLAUDE_CONFIG_DIR` at the mounted Workspace but never reads or exports Claude's credentials.
-- **Concurrency is supported.** Multiple Session Sandboxes can mount the same user's Workspace at once. They share authentication and files but retain separate Claude conversation IDs, queues, and configuration. Because concurrent Sessions can edit the same files, callers must coordinate conflicting work.
+- **One durable Workspace per user.** The Workspace is derived from the verified JWT subject, so callers can never select another user's Workspace. Claude Code keeps its native auth state in `/workspace/.claude` (via `CLAUDE_CONFIG_DIR`). Application state lives in `/workspace/.cantelop`.
+- **One disposable Sandbox per active Session.** Cantelop starts a Sandbox on demand, mounts the user's Workspace at `/workspace`, and releases it when idle. The Workspace survives, so a new Sandbox picks up the existing Claude login.
+- **Concurrent Sessions share a Workspace.** They share login and files but keep separate Claude conversations, queues, and configuration. Sessions can edit the same files, so callers must coordinate conflicting work.
 
-In short, the Workspace is the durable identity and state boundary; Sandboxes are replaceable compute attached only while a login or agent Session is active.
+Cantelop handles Sandbox lifecycle, Workspace mounts, message serialization, activity supervision, and event transport over SSE/WebSocket.
 
-## Get started
+### Claude Code hosting terms
 
-### 1. Install the CLI and clone the repository
+This project follows Anthropic's conditions for [offering Claude Code in a product](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products) and its [credential rules](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use). It runs the published binary unchanged, keeps every built-in auth method, and has each user authenticate and pay under their own Anthropic or provider agreement. It never injects an `ANTHROPIC_API_KEY`.
 
-The only Cantelop-specific local setup is installing its CLI. With Homebrew:
+Usage is billed according to the user's plan and Anthropic's current rules. Included limits, Agent SDK or `claude -p` credits, and enabled usage credits may all apply. This project does not guarantee that a run avoids usage credits. It is not legal approval, so review the full terms for your deployment. Terms last checked September 18, 2026.
 
-```sh
-brew install stepandel/tap/cantelop
-```
+## Quick start
 
-On macOS or Linux without Homebrew, use the official installer:
+### Prerequisites
 
-```sh
-curl -fsSL https://console.cantelop.dev/install.sh | sh
-```
+- Node.js 22+, Bun, and Docker with `linux/amd64` support
+- Cantelop CLI 0.11.2+ (SDK build protocol 5):
 
-Then clone the application and install its dependencies:
+  ```sh
+  brew install stepandel/tap/cantelop
+  # or, without Homebrew:
+  curl -fsSL https://console.cantelop.dev/install.sh | sh
+  ```
+
+- An identity provider that issues ES256 JWTs for your users. This project does not issue application tokens.
+
+### 1. Clone and configure
 
 ```sh
 git clone https://github.com/stepandel/claude-code-api.git
 cd claude-code-api
 npm ci
-```
-
-The application also requires Node.js 22+, Bun, and Docker with `linux/amd64` support. No Cantelop service runs locally: the CLI builds and deploys the App, while Cantelop manages the hosted Edge API, Workspaces, and Sandboxes. CLI account authentication happens later with `cantelop login`.
-
-Use the [Cantelop platform deployment guide](https://console.cantelop.dev/docs) for account management, complete CLI documentation, release operations, logs, traces, rollback, and platform troubleshooting. The steps below cover the configuration and verification specific to this application.
-
-### 2. Choose the App identity
-
-The `app` field in `cantelop.json` is currently `cantelop-claude-api`. Change it before creating the App if the deployment needs a different or environment-specific slug. The App uses that manifest to build two artifacts:
-
-- the Edge API from `src/api.ts`;
-- the native Session runtime from `src/session.ts` and `docker/Dockerfile`.
-
-The custom image installs the repository-pinned, unmodified Claude Code binary plus the Python PTY helper used by native login. Cantelop supplies the runtime user, process entrypoint, Sandbox lifecycle, and `/workspace` mount.
-
-### 3. Configure application identity verification
-
-Create a local configuration file and replace every placeholder:
-
-```sh
 cp .env.example .env
 ```
 
-- `AUTH_PUBLIC_JWK`: the public P-256 JWK used to verify application JWTs. Do not provide its private key.
-- `AUTH_ISSUER`: the exact JWT `iss` value issued by your identity system.
-- `AUTH_AUDIENCE`: the exact JWT `aud` value accepted by this API; it defaults to `cantelop-claude-api`.
+Set the values in `.env`:
 
-These values authenticate callers to this application. They are separate from Claude authentication, which each user completes later through Claude Code's native login. Do not add an Anthropic API key, Claude token, JWT signing key, or shared provider credential to this App.
+| Variable | Value |
+| --- | --- |
+| `AUTH_PUBLIC_JWK` | Public P-256 JWK that verifies your application JWTs. Never the private key. |
+| `AUTH_ISSUER` | Exact JWT `iss` value. |
+| `AUTH_AUDIENCE` | Exact JWT `aud` value. Defaults to `cantelop-claude-api`. |
 
-### 4. Verify the release locally
+These values authenticate callers to *your application* only. Claude authentication happens later, per user. Never add an Anthropic API key, Claude token, JWT signing key, or shared provider credential to this App.
 
-Run the application checks and qualify both release artifacts locally:
+The App slug is the `app` field in `cantelop.json` (default `cantelop-claude-api`). Change it now if you need a different or environment-specific slug.
+
+### 2. Check and build
 
 ```sh
 npm run check
@@ -80,91 +64,96 @@ npm test
 npm run build
 ```
 
-`npm run build` delegates to `cantelop build` and qualifies both release artifacts without publishing them.
+`npm run build` runs `cantelop build`. It builds the Edge API (`src/api.ts`) and the Session image (`src/session.ts` + `docker/Dockerfile`) without publishing them.
 
-### 5. Create, configure, and deploy the App
+### 3. Run locally (optional)
 
-Authenticate the CLI, create the manifest's App once, and sync the declared environment values:
+```sh
+npm run dev
+```
+
+This runs `cantelop dev --container`, so Sessions use the real Docker image with Claude Code and the login helper installed. Use the printed base URL as `BASE_URL`.
+
+### 4. Deploy
 
 ```sh
 cantelop login
-cantelop app create -slug cantelop-claude-api
+cantelop app create -slug cantelop-claude-api   # first deploy only; use your slug
 cantelop env sync --env-file .env --dry-run
 cantelop env sync --env-file .env
-```
-
-If you changed the `app` field, use the same slug with `app create`. For an App that already exists, skip the create command. Then run the platform preflight, build without publishing, and create the release:
-
-```sh
 cantelop doctor
 cantelop deploy --dry-run
 cantelop deploy
 cantelop releases --json
 ```
 
-Wait until the new release is active before sending traffic. The platform guide documents how to inspect build or activation failures, stream logs, examine traces and Sandboxes, and roll back a release.
+Wait for the new release to become active before sending traffic. See the [Cantelop docs](https://console.cantelop.dev/docs) for logs, traces, rollback, and troubleshooting.
 
-### 6. Smoke-test the deployment
-
-Use the deployed App origin as `BASE_URL`. Check the public health route, issue an ES256 application JWT whose `iss` and `aud` match the configured values, and visit `$BASE_URL/login` in a browser to start native Claude login:
+### 5. Smoke test
 
 ```sh
-curl "$BASE_URL/health"
+curl "$BASE_URL/health"   # {"ok":true}
 ```
 
-After the user signs in with their own Claude account, use the [core workflow](#core-workflow) to create a Session, subscribe to its events, and send a message. A production rollout should also verify tenant isolation with at least two application identities and confirm that a new Sandbox can reuse each user's native authentication from the durable Workspace.
+Then open `$BASE_URL/login` in a browser, paste an application JWT, and connect a Claude account. After that, follow the [example workflow](#example-workflow).
 
-## API interface
+Before production, also verify tenant isolation with at least two identities. Confirm that a fresh Sandbox reuses each user's Claude login from their Workspace.
 
-Set `BASE_URL` to the deployed App origin and send the application JWT as a bearer token on every `/v1/*` request:
+## API
 
-```sh
+Every `/v1/*` request needs your application JWT:
+
+```
 Authorization: Bearer $USER_TOKEN
 Content-Type: application/json
 ```
 
-The JWT must be ES256-signed and contain `sub`, `iss`, `aud`, and `exp` claims matching the App configuration. The API derives the caller's Workspace and Session ownership from that identity; clients cannot select another user's Workspace.
+The token must be ES256-signed with `sub`, `iss`, `aud`, and `exp` claims matching the App configuration. `nbf` is optional. Tokens are never accepted in query strings. Session ownership is checked before every dispatch, request, and event subscription.
 
-| Method | Route | Request | Response |
+| Method | Route | Body | Response |
 | --- | --- | --- | --- |
-| GET | `/health` | — | `200 {"ok":true}`; public |
-| GET | `/login` | — | Native Claude subscription login page; public page, authenticated API calls |
-| POST | `/v1/auth` | `{}` to check status, or an encrypted-login handshake | `200` auth status or `202` receipt |
+| GET | `/health` | — | `200 {"ok":true}` (public) |
+| GET | `/login` | — | Claude login page (public page; its API calls are authenticated) |
+| POST | `/v1/auth` | `{}` for status, or a login handshake | `200` status, or `202` receipt |
 | POST | `/v1/auth/input` | Encrypted terminal frame | `202` receipt |
-| POST | `/v1/auth/cancel` | `{"attemptId":"<uuid>"}` | `202` receipt |
+| POST | `/v1/auth/cancel` | `{attemptId}` | `202` receipt |
 | POST | `/v1/auth/complete` | `{}` | `200` auth status |
 | POST | `/v1/auth/logout` | `{}` | `200` signed-out status |
-| POST | `/v1/sessions` | Session configuration | `202 {sessionId,receiptId}` |
-| POST | `/v1/messages` | `{sessionId,text,mode?,messageId?}` | `202 {sessionId,receiptId,messageId}` |
-| POST | `/v1/cancel` | `{sessionId,messageId}` | `202 {sessionId,receiptId,messageId}` |
-| POST | `/v1/snapshot` | `{sessionId}` | `200` persisted Session summary |
-| GET | `/v1/events?sessionId=...` | — | Authenticated SSE or WebSocket event stream |
+| POST | `/v1/sessions` | Session configuration | `202 {sessionId, receiptId}` |
+| POST | `/v1/messages` | `{sessionId, text, mode?, messageId?}` | `202 {sessionId, receiptId, messageId}` |
+| POST | `/v1/cancel` | `{sessionId, messageId}` | `202 {sessionId, receiptId, messageId}` |
+| POST | `/v1/snapshot` | `{sessionId}` | `200` Session summary |
+| GET | `/v1/events?sessionId=…` | — | SSE or WebSocket event stream |
 
-### Core workflow
+**Synchronous vs. asynchronous.** Auth status, auth completion, logout, and snapshots return their result directly with HTTP 200. They wait up to 30 seconds (45 for logout), then return `504` with `code: "request_wait_timeout"`. A timeout stops the wait, not the work, and these calls are safe to repeat. Everything else returns `202` and reports outcomes as events.
 
-First connect the user's native Claude subscription at `/login`, or use the encrypted programmatic login protocol described under [Authentication boundary](#authentication-boundary). Then create an immutable agent Session:
+**Limits.** POST bodies are capped at 48 KiB of encoded JSON. Message text and system prompts are capped at 32 KiB of UTF-8. Fetch larger context through MCP, or split the work across messages.
+
+### Example workflow
+
+Create a Session:
 
 ```sh
 curl "$BASE_URL/v1/sessions" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
-    "model":"sonnet",
-    "systemPrompt":"Use the available project tools.",
-    "maxTurns":24,
-    "tools":["Read","Glob","Grep"],
-    "allowedTools":["Read","Glob","Grep","mcp__project__search"],
-    "mcps":{
-      "project":{
-        "type":"http",
-        "url":"https://tools.example.com/mcp",
-        "headers":{"Authorization":"Bearer SESSION_SCOPED_TOKEN"}
+    "model": "sonnet",
+    "systemPrompt": "Use the available project tools.",
+    "maxTurns": 24,
+    "tools": ["Read", "Glob", "Grep"],
+    "allowedTools": ["Read", "Glob", "Grep", "mcp__project__search"],
+    "mcps": {
+      "project": {
+        "type": "http",
+        "url": "https://tools.example.com/mcp",
+        "headers": {"Authorization": "Bearer SESSION_SCOPED_TOKEN"}
       }
     }
   }'
 ```
 
-Save the returned `sessionId`, subscribe to output, and send work:
+Creation is asynchronous. Watch for `session.ready` and `auth.status` events. Save the returned `sessionId` as `SESSION_ID`, then subscribe and send work:
 
 ```sh
 curl -N "$BASE_URL/v1/events?sessionId=$SESSION_ID" \
@@ -176,218 +165,157 @@ curl "$BASE_URL/v1/messages" \
   -d "{\"sessionId\":\"$SESSION_ID\",\"text\":\"Inspect this project\",\"mode\":\"queue\"}"
 ```
 
-Session configuration fields:
+A Session can be created before the user signs in to Claude. Each turn rechecks authentication and fails without calling the model if the user is signed out.
 
-- `tools`: built-in Claude Code tools exposed to the model. Defaults to none.
-- `allowedTools`: exposed tools or native permission rules that may run unattended. Everything else is denied because the runner uses `dontAsk`.
-- `mcps`: named `http`, `sse`, or `stdio` MCP server configurations. Discovered tools are named `mcp__<server>__<tool>` and must match `allowedTools` to execute.
-- `model`: optional native Claude model alias or ID.
-- `systemPrompt`: optional replacement system prompt, up to 32 KiB of UTF-8.
-- `maxTurns`: optional per-message turn limit from 1 to 100.
+### Session configuration
 
-Configuration is immutable after Session creation. Create a new Session to change models, prompts, tools, MCP servers, or run-scoped credentials. POST bodies are limited to 48 KiB; message text is limited to 32 KiB of UTF-8.
+Configuration is immutable and survives Sandbox reactivation. To change the model, prompt, tools, MCP servers, or run-scoped tokens, create a new Session.
 
-SDK reference: [upstream documentation](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.12.0). Version 0.12.0 was verified against GitHub and npm on September 23, 2026. Builds require a Cantelop CLI compatible with SDK build protocol 5 (verified with CLI 0.11.2). The API artifact publishes all 12 application routes for the Cantelop console.
+| Field | Description |
+| --- | --- |
+| `tools` | Built-in Claude Code tools exposed to the model. Defaults to none. |
+| `allowedTools` | Tool names or native permission rules that may run unattended, such as `mcp__docs__search` or `mcp__project__*`. Everything else is denied (`dontAsk`), and there is no blanket bypass. |
+| `mcps` | Map of server name to `http`, `sse`, or `stdio` MCP config. Tools appear as `mcp__<server>__<tool>`. |
+| `model` | Optional model alias or ID made of 1–128 characters from `[A-Za-z0-9._-]`, starting with a letter or digit. Omit it or use `default` for Claude's default. Availability depends on the user's account. |
+| `systemPrompt` | Optional non-blank replacement for Claude's default system prompt (not appended). |
+| `maxTurns` | Optional per-message turn limit from 1 to 100. Hitting the limit marks the message failed. |
 
-## Implementation map
-
-- `src/api.ts`: `defineApi`, JWT verification, `app.workspaces.open`, `app.sessions.open`, dispatch, and authenticated event streaming. No local server or Docker daemon management.
-- `src/session.ts`: `defineSessionBehaviour`, managed activities for long-running turns, queue/steer/cancel handling, and recovery.
-- `src/login.ts`, `src/login-process.ts`, and `runtime/login-pty.py`: native login lifecycle and PTY relay.
-- `src/login-page.ts` and `src/terminal-crypto.ts`: login screen and encrypted terminal transport.
-- `src/claude.ts`: native CLI subprocess, process-group cancellation, stream parsing, explicit tool/MCP settings, and native authentication status.
-- `src/state.ts`: atomic snapshots of configuration, queue, message status, and Claude conversation identity under `/workspace/.cantelop`.
-- `cantelop.json` and `docker/Dockerfile`: Edge/Session entrypoints and system dependencies. Cantelop supplies the runtime user, startup command, and `/workspace` mount.
-
-Each application identity maps to a server-derived Workspace slug. Separate sessions for that user mount the same Workspace. Claude's own authentication state lives in `/workspace/.claude` via `CLAUDE_CONFIG_DIR`; the application never reads or exports those credentials. Each logical Session stores a distinct Claude conversation ID and configuration.
-
-## Authentication boundary
-
-Open **`/login`** on your App's origin. Enter an application access token from your identity system and select **Connect Claude**. The page opens the native Claude Code login in the user's auth Sandbox. Open the displayed Anthropic link, sign in with your subscription, and enter any completion code only when the native terminal asks for it. The page confirms success after checking `claude auth status`.
-
-Application identity and Claude identity remain separate. Your backend issues an ES256 JWT with `sub`, `iss`, `aud`, and `exp` (optional `nbf`); Cantelop receives only its public verification key. The terminal runs the unmodified `claude auth login` command with `CLAUDE_CONFIG_DIR=/workspace/.claude`. Claude handles the OAuth exchange and persists its own credentials. The application does not implement an OAuth callback or extract Claude's tokens.
-
-The page is a small line-oriented login console, not a general shell. It uses a Python standard-library PTY helper installed in the runtime image. Input echo is disabled; sending an empty response presses Enter. Native terminal output is rendered as inert text, and only Anthropic-domain HTTPS links are made clickable. No external frontend assets or build step are required.
-
-Each login attempt has a ten-minute lifetime and a unique ID. Only one attempt can run in the user's deterministic auth Session. Cancellation terminates and reaps the native process group. Network reconnection uses Cantelop event replay while the page remains open. Closing or refreshing the page discards its temporary keys; cancel the old attempt or wait for expiry before starting another. Sandbox recovery emits `auth.reset`; unfinished login attempts are not resumed.
-
-### Terminal transport
-
-The SDK sends dispatch payloads through the platform and supports bounded event replay; it does not promise zero retention of platform payloads. Accordingly, the browser and auth Session negotiate a temporary P-256 ECDH key and use AES-256-GCM for **both input and output**. Cantelop dispatch and replay receive ciphertext. Private transport keys live only in browser/Session memory and are never saved in the Workspace. This protects stored transport payloads, not a compromised browser, runtime, or application server.
-
-Application code never logs terminal input/output or persists a terminal transcript. The helper discards stderr diagnostics. Claude itself owns its native configuration and any native diagnostic files. Authentication status and attempt metadata remain visible to the platform. Keep TLS enabled and apply your deployment's access/logging policies.
-
-Anthropic's [hosting conditions](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products) describe hosting the unmodified binary under Commercial Terms with end-user authentication and billing. Its [credential conditions](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use) distinguish native sign-in from a third-party Claude login or credential intermediary. This scaffold is designed around that distinction; it is not legal approval. Review the full terms for your deployment. Checked September 18, 2026.
-
-## Local setup
-
-Requires Node.js 22+, Cantelop CLI 0.11.2+, Bun, and Docker with `linux/amd64` support. The dev script uses `cantelop dev --container` so Sessions run the service's Docker image with Claude Code, Python, and the PTY helper installed.
-
-```sh
-npm ci
-cp .env.example .env
-# Set AUTH_PUBLIC_JWK, AUTH_ISSUER, and AUTH_AUDIENCE for your identity provider.
-npm run check
-npm test
-npm run build
-npm run dev
-```
-
-Use an ES256 JWT issued by your application authentication system as `USER_TOKEN`, matching the public key, issuer, and audience configured in `.env`. Use the API base URL printed by `cantelop dev` as `BASE_URL`. The project does not issue application tokens.
-
-`npm run build` runs `cantelop build`, which reads `cantelop.json` and builds both the Edge API and native Session image. The Dockerfile downloads Claude Code 2.1.267 directly and checks repository-pinned SHA-256 hashes for Linux amd64 and arm64 before installing it. Runtime auto-updates are disabled. To update Claude, change the version and both checksums together using Anthropic's release manifest, then run the service tests and image build.
-
-## API usage
-
-For interactive subscription login, use `/login`. Programmatic clients can implement the same terminal protocol:
-
-1. `POST /v1/auth` with `{}` allocates the user's Workspace and returns HTTP 200 with the auth `sessionId`, Workspace identifiers, `/login` URL, `type: "auth.status"`, and `authenticated: boolean` from the native authentication check. No event subscription is needed for this check.
-2. Subscribe to `/v1/events?sessionId=...` **before** starting the terminal.
-3. Generate a temporary ECDH P-256 key pair. `POST /v1/auth` with `{ "attemptId": "<UUID>", "publicKey": <public JWK> }` starts login. Private JWK fields are rejected.
-4. `auth.started` returns the Session's public JWK and `expiresAt`. Derive the AES-GCM key using `src/terminal-crypto.ts`. Encrypted `auth.output` events carry `terminalSequence`, `iv`, and `data`. Decrypt with additional authenticated data `<attemptId>:output:<terminalSequence>`.
-5. Send encrypted terminal bytes to `POST /v1/auth/input` as `{attemptId, sequence, iv, data}`. Input sequence starts at 1; AAD is `<attemptId>:input:<sequence>`. IV is 12 random bytes; IV and ciphertext use standard base64. Input is limited to 4 KiB per frame and 32 KiB per attempt. Duplicate accepted sequences are ignored; gaps are rejected. No plaintext code field is accepted.
-6. `POST /v1/auth/cancel` with `{attemptId}` stops an attempt. `auth.finished` reports the outcome and native authentication status. `POST /v1/auth/complete` with `{}` returns HTTP 200 with `{sessionId, type: "auth.status", authenticated}` directly.
-
-After a successful `auth.finished` event, call `POST /v1/auth/complete`; the bundled login page does this automatically. Both this endpoint and the status-only `POST /v1/auth` stop the auth Session's Sandbox once native authentication is confirmed, using SDK 0.12's `session.stop()`. Cleanup completes before the API returns success; platform stop failures are returned for retry. Stopping closes event streams, preserves credentials in the persistent Workspace, and allows later requests to reactivate the same Session. Unauthenticated checks leave the Sandbox available for login.
-
-The server derives the auth Session from the caller's JWT; clients cannot select a different user's terminal. The browser implementation in `src/login-page.ts` demonstrates the complete flow, including subscribing before dispatch and handling encrypted event replay.
-
-Create a configured agent Session:
-
-```sh
-curl "$BASE_URL/v1/sessions" -H "Authorization: Bearer $USER_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"tools":["Read","Glob","Grep"],"allowedTools":["Read","Glob","Grep"],"mcps":{}}'
-```
-
-Optional session execution settings can be supplied alongside MCP configuration:
+MCP servers:
 
 ```json
 {
-  "model": "sonnet",
-  "systemPrompt": "Use only the supplied project tools.",
-  "maxTurns": 24,
-  "tools": [],
-  "allowedTools": ["mcp__project__*"],
-  "mcps": {
-    "project": {
-      "type": "http",
-      "url": "https://tools.example.com/mcp",
-      "headers": {"Authorization": "Bearer SESSION_SCOPED_TOKEN"}
-    }
-  }
+  "docs":  {"type": "http",  "url": "https://your-mcp.example/mcp", "headers": {"Authorization": "Bearer …"}},
+  "local": {"type": "stdio", "command": "node", "args": ["/workspace/tools/server.js"], "env": {}}
 }
 ```
 
-- `model`: optional native model alias or ID, 1–128 ASCII letters, digits, dots, underscores or hyphens, starting with a letter or digit. Omit it or use `default` for Claude's native default. Availability is determined by the user's account and installed Claude version.
-- `systemPrompt`: optional nonblank replacement for Claude's default system prompt, at most 32 KiB in UTF-8. Passed using a private temporary file, removed after the turn, and persisted as part of the Session configuration. It is not appended to the user's message.
-- `maxTurns`: optional integer from 1 to 100, applied to each message, including resumed turns. Omission retains Claude's native default. A turn-limit failure is reported as a failed message, not successful completion.
+HTTP/SSE servers run remotely and only need to be reachable from the Sandbox. Stdio servers and their dependencies must exist inside the Sandbox. MCP settings, including headers and secrets, are persisted in the user's Workspace. Custom tools are MCP tools, not JSON function declarations.
 
-All configuration is immutable and survives reactivation. Create a fresh Session when changing models, prompts, or run-scoped MCP tokens. Model usage still requires the user's native Claude authentication; these fields do not accept provider credentials.
+### Messages
 
-Message `text` accepts up to 32 KiB of UTF-8. Every POST body remains limited to 48 KiB of encoded JSON, including configuration, MCP headers, and JSON escaping. Larger context must be fetched through MCP or split into separate tasks.
+- `mode: "queue"` (default) runs the message FIFO after pending work.
+- `mode: "steer"` interrupts the active turn, waits for it to stop, then runs this message before pending work. Repeated steers run newest-first. This is interrupt-and-resume, not mid-generation injection.
 
-Session creation is asynchronous: observe `session.ready` and `auth.status`. A Session can be configured before native sign-in; each turn rechecks authentication and fails without starting a model call if unauthenticated. Store the returned `sessionId` as `SESSION_ID`.
+Each response includes a platform `receiptId` and an application `messageId`. To retry idempotently, pass your own UUID `messageId`. Reusing it with different text emits `message_id_conflict`.
 
-`tools` selects available built-in tools; it defaults to none. `allowedTools` grants unattended execution for the listed tool names or native rules. Other permissions are denied (`dontAsk`); there is no blanket permission bypass. Custom tools are MCP tools, not JSON function declarations.
-
-`mcps` is a name-to-server map. For example:
-
-```json
-{
-  "docs": {"type":"http","url":"https://your-mcp.example/mcp"},
-  "local": {"type":"stdio","command":"node","args":["/workspace/tools/server.js"]}
-}
-```
-
-HTTP/SSE servers may include `headers`; their tool implementations run remotely and only need to be reachable from the Sandbox. Stdio servers may include `env`; their command, tool code, and dependencies must exist inside the Sandbox. MCP settings may contain secrets and are persisted within the user's Workspace. Grant matching permissions explicitly, such as `mcp__docs__search`. Session configuration is immutable; create a new Session to change it.
-
-Send queued or steering messages:
+Cancel a queued or running message:
 
 ```sh
-curl "$BASE_URL/v1/messages" -H "Authorization: Bearer $USER_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d "{\"sessionId\":\"$SESSION_ID\",\"text\":\"Inspect this project\",\"mode\":\"queue\"}"
-
-curl "$BASE_URL/v1/messages" -H "Authorization: Bearer $USER_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d "{\"sessionId\":\"$SESSION_ID\",\"text\":\"Focus on authentication\",\"mode\":\"steer\"}"
-```
-
-Each response has a platform `receiptId` and an application `messageId`. Supply an optional UUID `messageId` to retry a message idempotently; reusing it with different text emits `message_id_conflict`.
-
-Cancel an active or queued application message:
-
-```sh
-curl "$BASE_URL/v1/cancel" -H "Authorization: Bearer $USER_TOKEN" \
+curl "$BASE_URL/v1/cancel" \
+  -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d "{\"sessionId\":\"$SESSION_ID\",\"messageId\":\"$MESSAGE_ID\"}"
 ```
 
-Watch output:
+Finished messages are unaffected. Tool effects that already completed cannot be undone.
+
+### Events
+
+`/v1/events` returns SDK-native SSE. WebSocket clients use the `cantelop.events.v1` subprotocol. Browser `EventSource` and `WebSocket` cannot set an `Authorization` header, so browser integrations need a same-origin backend or cookie adapter.
+
+- Replay is bounded. Resume with `Last-Event-ID`, or with the `stream_id`/`after` query parameters.
+- Claude output arrives as `claude` events. Large frames are split into `claude.fragment` events: concatenate `json` by `eventId` and `index`, then parse once all `total` fragments arrive.
+- Events contain private model output and may include user data.
+
+After a stream reset, fetch a snapshot:
 
 ```sh
-curl -N "$BASE_URL/v1/events?sessionId=$SESSION_ID" \
-  -H "Authorization: Bearer $USER_TOKEN"
+curl "$BASE_URL/v1/snapshot" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"sessionId\":\"$SESSION_ID\"}"
 ```
 
-This returns SDK-native SSE. WebSocket clients use the `cantelop.events.v1` subprotocol and must supply the bearer header through a compatible client. Browser `EventSource` and browser WebSocket constructors cannot set arbitrary Authorization headers; a browser integration needs a same-origin backend/cookie adapter. Tokens are deliberately not accepted in query strings.
+This returns `{sessionId, type: "session.state", configured, messages, truncated}` with the latest 50 messages. Prompt previews are capped at 256 characters. It is a summary, not a transcript API.
 
-The SDK handles bounded replay using `Last-Event-ID` or `stream_id`/`after` query parameters. Large Claude frames are emitted as `claude.fragment`: concatenate `json` by `eventId` and `index`, then parse when `total` fragments arrive. Other frames use `claude`. Events are private model output and may contain user data.
+## Claude authentication
 
-Request a durable state snapshot after a stream reset:
+### Login page
 
-```sh
-curl "$BASE_URL/v1/snapshot" -H "Authorization: Bearer $USER_TOKEN" \
-  -H 'Content-Type: application/json' -d "{\"sessionId\":\"$SESSION_ID\"}"
-```
+Open `/login` on the App's origin, enter an application JWT, and select **Connect Claude**. The page runs the unmodified `claude auth login` in the user's auth Sandbox. Open the Anthropic link it shows, sign in, and enter a completion code if the terminal asks for one. The page confirms success with `claude auth status`.
 
-The HTTP 200 response contains `{sessionId, type: "session.state", configured, messages, truncated}` directly, with the latest 50 messages and prompt previews capped at 256 characters. It is a summary, not a full transcript API. Sandbox recovery still emits a `session.state` event.
+Claude runs the OAuth exchange itself and stores its own credentials. The application implements no OAuth callback and never reads Claude's tokens.
 
-All API routes except health require an application JWT; the static login page is public. Workspace selection is derived from verified identity; clients cannot select another user's Workspace. Session ownership is checked before dispatch, requests, and event subscription.
+The page is a small line-oriented console, not a shell. It is driven by a Python standard-library PTY helper in the runtime image. Input echo is off, and an empty submission presses Enter. Terminal output is rendered as inert text, and only Anthropic-domain HTTPS links are clickable. It needs no external assets or frontend build.
 
-Auth checks and snapshots use `session.request()` and return HTTP 200 with the result instead of a 202 receipt. Clients must read these response bodies instead of waiting for status/snapshot events. Requests wait up to 30 seconds; timeout returns HTTP 504 with `code: "request_wait_timeout"`. A timeout or disconnect stops waiting, not execution; these read-only checks can be repeated. Interactive login start/input/cancel, Session configuration, and model queue/steer/cancel remain asynchronous (202), with outcomes delivered as events.
+### Programmatic login
 
-## Queue, cancellation, and durability
+Clients can implement the same protocol. `src/login-page.ts` is a complete reference.
 
-Cantelop serializes command handlers in the Session mailbox. A managed activity runs a turn while the mailbox stays responsive. The application persists its pending prompt queue separately from the platform mailbox. Only one turn runs per Session.
+1. `POST /v1/auth` with `{}` returns `{sessionId, …, type: "auth.status", authenticated}` along with Workspace identifiers and the `/login` URL.
+2. Subscribe to `/v1/events?sessionId=…` **before** starting login.
+3. Generate an ephemeral ECDH P-256 key pair. `POST /v1/auth` with `{attemptId: "<uuid>", publicKey: <public JWK>}`. Private JWK fields are rejected. Add `force: true` to start a fresh login even if stale credentials still report signed in.
+4. `auth.started` returns the Session's public JWK and `expiresAt`. Derive the AES-GCM key as `src/terminal-crypto.ts` does. `auth.output` events carry `terminalSequence`, `iv`, and `data`. Their AAD is `<attemptId>:output:<terminalSequence>`.
+5. Send input to `POST /v1/auth/input` as `{attemptId, sequence, iv, data}`. `sequence` starts at 1, and the AAD is `<attemptId>:input:<sequence>`. Use a random 12-byte IV and standard base64. Frames are limited to 4 KiB each and 32 KiB per attempt. Duplicate sequences are ignored and gaps are rejected.
+6. `auth.finished` reports the outcome. On success, call `POST /v1/auth/complete` with `{}`. To abort, call `POST /v1/auth/cancel` with `{attemptId}`.
 
-- `queue`: FIFO after pending work.
-- `steer`: interrupt the active native process group, wait for termination, then run the steering prompt before pending work. Repeated steering is newest-first. This is interrupt-and-resume, not mid-generation injection.
-- `cancel`: remove a queued message or terminate the active turn. Finished messages are unchanged. Completed tool effects cannot be undone.
+Each attempt has a unique ID and a 10-minute lifetime, and a user can run only one attempt at a time. Cancelling terminates and reaps the login process group. Event replay covers reconnects while the page stays open. Refreshing the page discards its keys, so cancel the old attempt or let it expire first. Sandbox recovery emits `auth.reset` and does not resume unfinished attempts.
 
-The runner uses SIGTERM, then SIGKILL for stubborn process groups, and waits before starting the next turn. Tools that deliberately detach into their own process group may outlive a turn; Sandbox termination is the broader cleanup boundary.
+Once authentication is confirmed, both `/v1/auth/complete` and the status check stop the auth Sandbox before returning. A failed stop is returned as an error so the caller can retry. Credentials remain in the Workspace. If the user is not authenticated, the Sandbox stays up for login.
 
-Configuration, message IDs/statuses, pending queue, and conversation identity survive Sandbox loss. On reactivation, previously running work becomes `interrupted` and is **not replayed** because tools may already have produced effects. The recovery hook resumes only queued work. Output events use Cantelop's bounded in-memory stream; full event history is not durable. Claude manages its own native transcript. An interruption before the transcript is written can make a later resume fail and may require a new Session.
+### Terminal encryption
 
-Sessions share files within the same user's Workspace; concurrent sessions can edit the same files. Data persists when Cantelop releases a Sandbox. A Session retains at most 1,000 application messages; create a new Session after that. Queue snapshots are atomically replaced; this is not a general transactional database or an exactly-once tool-execution guarantee.
+Cantelop dispatch and event replay may retain payloads, so login input **and** output are encrypted end to end with AES-256-GCM over an ephemeral P-256 ECDH key. The platform only sees ciphertext. Private keys live only in browser and Session memory and are never written to the Workspace. This protects stored transport payloads. It does not protect against a compromised browser, runtime, or server.
 
-## Production checklist
-
-Choose an application name, issuer, and audience for your own deployment. Configure only the public ES256 verification JWK in Cantelop; keep signing keys and bearer tokens outside the repository and runtime environment. A bootstrap token can provide initial operator access, but production deployments should use their own multi-user identity provider, expiration policy, and key-rotation process. Application authentication remains separate from each user's native Claude subscription authentication.
-
-Before production: integrate your identity issuer and key rotation/revocation strategy, add user quotas and admission/rate limits, and define Workspace retention/backup/deletion policies. Review network access for your MCP services under Cantelop's sandbox policy. Do not place shared provider credentials or application signing keys in App environment variables visible to native Sessions.
-
-## Verification
-
-Tests exercise actual SDK route definitions, JWT/tenant checks, Workspace/Session dispatch, managed activity queue/steer/cancel behaviour, durable reactivation, output fragmentation, and native subprocess parsing/cancellation using a fake Claude executable. They do not call a model or use subscription credentials. The login tests use a fake interactive Claude executable, verify PTY input/cancellation, and execute the compiled browser page against the real API handlers with simulated native login. A real subscription authorization and model turn require the user’s own account; automated tests do not sign in as the user.
+The application never logs terminal I/O or keeps a transcript, and the PTY helper discards stderr. Auth status and attempt metadata remain visible to the platform. Keep TLS on and apply your own logging policies.
 
 ### Re-authentication
 
-The native CLI owns credential refresh in the durable workspace. Terminal native
-`authentication_failed` errors and an explicit signed-out status emit
-`auth.required` with the affected message ID. Status command failures are not
-classified as sign-out. A successful CLI turn after an internal auth retry does
-not emit `auth.required`; billing, rate-limit, and network failures retain normal
-failure handling.
+Claude Code refreshes its own credentials in the Workspace. A native `authentication_failed` error or an explicit signed-out status emits `auth.required` with the affected message ID. Status-command failures, billing errors, rate limits, and network errors are not treated as sign-outs. An internal retry that succeeds emits nothing.
 
-Clients should pause new work for the affected user and offer native sign-in.
-Pass `force: true` with the public-key handshake to `POST /v1/auth` to open a new
-login even when stale saved credentials still report signed in. Verify the
-matching `auth.finished` event reports `authenticated: true` and
-`outcome: succeeded` before clearing the pause. Interrupted work must not be
-replayed automatically because earlier tool actions may already have completed.
+When a client receives `auth.required`, it should pause new work for that user and offer sign-in (use `force: true`). Resume only after `auth.finished` reports `authenticated: true` and `outcome: "succeeded"`. Interrupted work is never replayed automatically.
 
-### Signing out
+### Sign-out
 
-`POST /v1/auth/logout` with `{}` runs native `claude auth logout` in the caller’s auth Session and verifies `claude auth status` reports signed out. It cancels and awaits any interactive login first, clears cached login completion, and returns HTTP 200 with `{sessionId, type: "auth.status", authenticated: false}` only after confirmation. Logout opens the auth Session with zero keep-alive, so Cantelop releases its Sandbox as soon as the mailbox and managed activity are idle; unlike interactive login, logout has no user-driven idle period to preserve. Stop the caller’s agent tasks before signing out. No workspace files or conversations are deleted. The request waits up to 45 seconds; a timeout does not confirm sign-out and can be retried.
+`POST /v1/auth/logout` cancels any pending login, runs `claude auth logout`, and confirms signed-out status. Only then does it return `{sessionId, type: "auth.status", authenticated: false}`. The auth Sandbox is released as soon as it is idle. Workspace files and conversations are kept. Stop the user's agent tasks first. A timeout does not confirm sign-out, so retry it.
+
+## Queueing and durability
+
+Cantelop serializes command handlers in each Session's mailbox. Each turn runs as a managed activity, so the mailbox stays responsive and only one turn runs at a time. Cancellation and steering send SIGTERM, then SIGKILL, to the Claude process group and wait for it to exit. A tool that detaches into its own process group can outlive its turn. Terminating the Sandbox is the broader cleanup.
+
+These survive Sandbox loss: configuration, message IDs and statuses, the pending queue, and the Claude conversation ID. They are stored as atomic snapshots under `/workspace/.cantelop`. On reactivation:
+
+- A turn that was running becomes `interrupted` and is **not replayed**, because its tools may already have had effects.
+- Queued work resumes.
+- Event history is not durable, since Cantelop's stream is bounded and in-memory. Claude keeps its own native transcript. If a Sandbox is lost before that transcript is written, resuming may fail and require a new Session.
+
+A Session holds at most 1,000 messages. This is not a transactional database, and tool execution is not exactly-once.
+
+## Project layout
+
+| Path | Purpose |
+| --- | --- |
+| `src/api.ts` | Edge API (`defineApi`), JWT verification, Workspace/Session routing, event streaming |
+| `src/session.ts` | Session behaviour (`defineSessionBehaviour`), managed turns, queue/steer/cancel, recovery |
+| `src/claude.ts` | Claude CLI subprocess, cancellation, stream parsing, tool/MCP settings, auth status |
+| `src/state.ts` | Durable Session state under `/workspace/.cantelop` |
+| `src/login.ts`, `src/login-process.ts`, `runtime/login-pty.py` | Native login lifecycle and PTY relay |
+| `src/login-page.ts`, `src/terminal-crypto.ts` | Login page and encrypted terminal transport |
+| `cantelop.json`, `docker/Dockerfile` | App manifest and Session image |
+
+### Updating Claude Code
+
+The Dockerfile installs Claude Code **2.1.267** and verifies pinned SHA-256 checksums for Linux amd64 and arm64. Runtime auto-updates are off. To upgrade, update the version and both checksums from Anthropic's release manifest, then run `npm test` and `npm run build`.
+
+### Tests
+
+Tests exercise the real SDK route definitions, JWT and tenant checks, Session dispatch, queue/steer/cancel, durable reactivation, output fragmentation, and subprocess handling. They use fake Claude executables. The login tests drive a fake interactive CLI through the PTY and run the compiled login page against the real API handlers. No test calls a model or uses real credentials. A real sign-in and model turn require a user's own account.
+
+## Production checklist
+
+- [ ] Use your own identity provider with expiry, key rotation, and revocation. Put only the public JWK in Cantelop. Keep signing keys and tokens out of the repo and runtime environment.
+- [ ] Choose your own App slug, issuer, and audience.
+- [ ] Add per-user quotas, admission control, and rate limits.
+- [ ] Define Workspace retention, backup, and deletion policies.
+- [ ] Review Sandbox network access for your MCP services.
+- [ ] Never put shared provider credentials or signing keys in App environment variables, because native Sessions can see them.
+- [ ] Verify tenant isolation and login reuse across Sandboxes (see [Smoke test](#5-smoke-test)).
+
+## References
+
+- [Cantelop SDK v0.12.0](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.12.0), verified against GitHub and npm on September 23, 2026
+- [Cantelop platform docs](https://console.cantelop.dev/docs)
+
+## License
+
+[MIT](LICENSE)
