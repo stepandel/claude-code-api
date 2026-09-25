@@ -11,7 +11,8 @@
     "dev": "cantelop dev --container",
     "build": "cantelop build",
     "check": "tsc -p tsconfig.api.json && tsc -p tsconfig.session.json",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "keys": "node scripts/generate-auth-keys.mjs"
   },
   "dependencies": {
     "@cantelop/sdk": "0.12.0"

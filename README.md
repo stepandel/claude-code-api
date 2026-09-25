@@ -54,6 +54,14 @@ Set the values in `.env`:
 | `AUTH_ISSUER` | Exact JWT `iss` value. |
 | `AUTH_AUDIENCE` | Exact JWT `aud` value. Defaults to `cantelop-claude-api`. |
 
+If you do not have a signing key yet, generate one:
+
+```sh
+npm run keys -- auth.private.jwk.json
+```
+
+This writes the private JWK to `auth.private.jwk.json` (mode 600, ignored by git) and prints the `AUTH_PUBLIC_JWK=…` line for `.env`. Move the private JWK into the secret store of the server that mints tokens, and delete the local copy.
+
 These values authenticate callers to *your application* only. Claude authentication happens later, per user. Never add an Anthropic API key, Claude token, JWT signing key, or shared provider credential to this App.
 
 The App slug is the `app` field in `cantelop.json` (default `cantelop-claude-api`). Change it now if you need a different or environment-specific slug.
@@ -114,6 +122,7 @@ Tokens must be signed on your server. A token signed in the browser lets anyone 
 - Algorithm `ES256` (P-256). Claims `sub`, `iss`, `aud`, and `exp` are required, and `nbf` is optional.
 - `sub` selects the user's Workspace. Use a stable, non-reusable user ID. For anonymous demos, mint a random ID on the server and bind it to the visitor's session.
 - **Lifetime: at least 15 minutes for interactive login.** A login attempt can last 10 minutes, and the same token is used for terminal input, completion, and every stream reconnect. Alternatively, refresh the token and use the new one for later calls.
+- `npm run keys` generates a suitable key pair.
 - Keep the private key in your backend's secret store. Never put it in this App's environment, because Sessions can read App environment variables.
 
 ### Backend adapter
@@ -379,6 +388,7 @@ A Session holds at most 1,000 messages. This is not a transactional database, an
 | `src/login.ts`, `src/login-process.ts`, `runtime/login-pty.py` | Native login lifecycle and PTY relay |
 | `src/login-page.ts`, `src/terminal-crypto.ts` | Login page and encrypted terminal transport |
 | `cantelop.json`, `docker/Dockerfile` | App manifest and Session image |
+| `scripts/generate-auth-keys.mjs` | ES256 key pair for application tokens (`npm run keys`) |
 
 ### Updating Claude Code
 
