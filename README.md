@@ -274,7 +274,7 @@ data: {"code":"event_stream_reset"}
 `event_stream_reset` and `event_cursor_expired` mean replay cannot continue: fetch a snapshot. `event_broker_unavailable` is transient, so reconnect with `Last-Event-ID`.
 
 - Replay is bounded. Resume with `Last-Event-ID`, or with the `stream_id`/`after` query parameters.
-- Claude output arrives as `claude` events. Large frames are split into `claude.fragment` events: concatenate `json` by `eventId` and `index`, then parse once all `total` fragments arrive.
+- Claude output arrives as `claude` events. Claude Code runs with `--include-partial-messages`, so `stream_event` frames carry text deltas while a reply is generated; complete `assistant` messages and the final `result` follow. Large frames are split into `claude.fragment` events: concatenate `json` by `eventId` and `index`, then parse once all `total` fragments arrive.
 - Events contain private model output and may include user data.
 
 After a stream reset, fetch a snapshot:
