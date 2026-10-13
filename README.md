@@ -261,19 +261,12 @@ Each application event arrives inside a Cantelop delivery envelope. **Read the e
 
 ```
 id: <stream_id>:<sequence>
-data: {"stream_id":"…","sequence":7,"session_id":"…","message_id":"…","created_at":"…","data":{"type":"message.status",…}}
+data: {"cursor":{"streamId":"…","sequence":7},"sessionId":"…","messageId":"…","createdAt":"…","data":{"type":"message.status",…}}
 ```
 
-Stream errors are not wrapped. They arrive as `event: error` frames with a bare code, after which the server closes the stream:
+SDK stream errors close the subscription. Reconnect with `Last-Event-ID`; if replay cannot continue, fetch a snapshot before reconnecting.
 
-```
-event: error
-data: {"code":"event_stream_reset"}
-```
-
-`event_stream_reset` and `event_cursor_expired` mean replay cannot continue: fetch a snapshot. `event_broker_unavailable` is transient, so reconnect with `Last-Event-ID`.
-
-- Replay is bounded. Resume with `Last-Event-ID`, or with the `stream_id`/`after` query parameters.
+- Replay is bounded. Resume with `Last-Event-ID: <stream_id>:<sequence>`.
 - Claude output arrives as `claude` events. Claude Code runs with `--include-partial-messages`, so `stream_event` frames carry text deltas while a reply is generated; complete `assistant` messages and the final `result` follow. Large frames are split into `claude.fragment` events: concatenate `json` by `eventId` and `index`, then parse once all `total` fragments arrive.
 - Events contain private model output and may include user data.
 
@@ -375,8 +368,9 @@ A Session holds at most 1,000 messages. This is not a transactional database, an
 
 | Path | Purpose |
 | --- | --- |
+| `src/cantelop.ts` | SDK 1 App definition, runtime, environment, and webhook routes |
 | `src/api.ts` | Edge webhook handlers, JWT verification, Workspace/Session routing, event streaming |
-| `src/session.ts` | Session behaviour (`defineSessionBehaviour`), managed turns, queue/steer/cancel, recovery |
+| `src/session.ts` | Session behaviour, managed turns, queue/steer/cancel, recovery |
 | `src/claude.ts` | Claude CLI subprocess, cancellation, stream parsing, tool/MCP settings, auth status |
 | `src/state.ts` | Durable Session state under `/workspace/.cantelop` |
 | `src/login.ts`, `src/login-process.ts`, `runtime/login-pty.py` | Native login lifecycle, sign-in link extraction, and PTY helper |
