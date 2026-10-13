@@ -27,7 +27,7 @@ The quick start deploys the API. To connect it to your product, continue with [E
 ### Prerequisites
 
 - Node.js 22+, Bun, and Docker with `linux/amd64` support
-- Cantelop CLI 0.14.0+ (SDK build protocol 6):
+- Cantelop CLI 0.15.0+ (SDK build protocol 6):
 
   ```sh
   brew install stepandel/tap/cantelop
