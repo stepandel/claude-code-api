@@ -1,6 +1,6 @@
 # Cantelop Claude Code App
 
-Run Anthropic's unmodified Claude Code binary for your users with `@cantelop/sdk@1.0.0-alpha.2`. Each user signs in with their own Claude subscription. Claude's credentials remain in their durable Workspace at `/workspace/.claude`; the App never reads or exports them.
+Run Anthropic's unmodified Claude Code binary for your users with `@cantelop/sdk@1.0.0-alpha.4`. Each user signs in with their own Claude subscription. Claude's credentials remain in their durable Workspace at `/workspace/.claude`; the App never reads or exports them.
 
 The App imports its native runner, auth provider, and Dockerfile from `@cantelop/sdk/harnesses/claude`. It defines its application-owned durable mailbox in `src/cantelop.ts`. Your application backend uses the generated SDK client for Workspaces, native login commands, agent messages, and event subscriptions. There are **no custom HTTP routes or webhooks** in this App.
 
