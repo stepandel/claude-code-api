@@ -15,7 +15,7 @@
     "keys": "node scripts/generate-auth-keys.mjs"
   },
   "dependencies": {
-    "@cantelop/sdk": "1.0.0-alpha.1"
+    "@cantelop/sdk": "1.0.0-alpha.4"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",
