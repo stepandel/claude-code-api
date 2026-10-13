@@ -1,5 +1,6 @@
-import { defineApi, RemoteAppError, type HttpMethod } from '@cantelop/sdk/api';
-import type { Command, Reply } from './contracts.js';
+import { RemoteAppError, type WebhookContext } from '@cantelop/sdk';
+import { eventsResponse } from './events.js';
+import type { Command, Event, Reply } from './contracts.js';
 import { identity } from './auth.js';
 import { ApiError, config, fail, fields, readBody, uuid } from './validation.js';
 
@@ -27,9 +28,10 @@ async function converge<T>(signal: AbortSignal, attempt: () => Promise<T>, faile
   }
 }
 
-export default defineApi<Command, Reply>(({ app, router, env }) => {
-  const route = (method: HttpMethod, path: string, handle: (r: Request) => Promise<Response>) => {
-    router.route(method, path, async ({ request }) => {
+export default async function api({ app, request, env }: WebhookContext<Command, Event, Reply>): Promise<Response> {
+  const handlers = new Map<string, (r: Request) => Promise<Response>>();
+  const route = (method: "GET" | "POST", path: string, handle: (r: Request) => Promise<Response>) => {
+    handlers.set(`${method} ${path}`, async request => {
       try { return await handle(request); }
       catch (error) {
         if (error instanceof RemoteAppError) {
@@ -42,7 +44,7 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
     });
   };
   const openSession = (config: {id: string; workspaceSlug: string; keepAliveSeconds: number}, signal: AbortSignal) => {
-    const session = app.sessions.open(config);
+    const session = app.workspace({slug:config.workspaceSlug}).session({id:config.id,keepAliveSeconds:config.keepAliveSeconds});
     return {
       id: session.id,
       stop: () => session.stop(),
@@ -52,7 +54,7 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
         let id: string | undefined;
         return converge(signal, () => session.request(command, {timeoutMs, signal, ...(id ? {id} : {})}), error => { id = error.messageId ?? id; });
       },
-      events: (request: Request) => converge(signal, () => session.events(request)),
+      events: (request: Request) => eventsResponse(session, request),
     };
   };
   const userSession = async (request: Request, sessionId: unknown) => {
@@ -77,10 +79,9 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
     if (reply.type === 'auth.status' && reply.authenticated) await session.stop();
     return reply;
   };
-  route('GET', '/health', async () => Response.json({ok:true}));
   route('POST', '/v1/auth', async request => {
     const user = await identity(request, env); fields(await readBody(request), []);
-    const workspace = await converge(request.signal, () => app.workspaces.open({slug:user.workspaceSlug}));
+    const workspace = await converge(request.signal, () => app.workspace({slug:user.workspaceSlug}).resolve());
     const session = authSession(user, request);
     const metadata = {workspaceId:workspace.id, workspaceSlug:workspace.slug, workspace:'/workspace'};
     return result(session.id, await confirmed(session, await session.request({type:'auth.check'},30_000)), metadata);
@@ -136,4 +137,6 @@ export default defineApi<Command, Reply>(({ app, router, env }) => {
     const session = await userSession(request,new URL(request.url).searchParams.get('sessionId'));
     return session.events(request);
   });
-});
+  const path = new URL(request.url).pathname.replace(/^\/webhooks/, "");
+  return handlers.get(`${request.method} ${path}`)?.(request) ?? new Response(null, {status:404});
+}

@@ -1,4 +1,3 @@
-import type { ApiEnvironment } from '@cantelop/sdk/api';
 import { ApiError } from './validation.js';
 const encoder = new TextEncoder();
 function decode(part: string): Uint8Array<ArrayBuffer> {
@@ -7,7 +6,7 @@ function decode(part: string): Uint8Array<ArrayBuffer> {
 }
 // Verify an externally issued application identity. Only the public key enters
 // Cantelop: a compromised native agent must not be able to mint tenant tokens.
-export async function identity(request: Request, env: ApiEnvironment) {
+export async function identity(request: Request, env: Readonly<Record<string, string | undefined>>) {
   if (!env.AUTH_PUBLIC_JWK || !env.AUTH_ISSUER || !env.AUTH_AUDIENCE) throw new ApiError(503, 'Application identity is not configured');
   try {
     const token = /^Bearer ([A-Za-z0-9_.-]+)$/.exec(request.headers.get('authorization') ?? '')?.[1];

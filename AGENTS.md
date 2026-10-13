@@ -1,7 +1,7 @@
 # Project instructions
 
 - Verify SDK versions and documentation directly against https://github.com/stepandel/cantelop-sdk and the npm registry. Do not treat other local projects or pre-existing SDK checkouts as authoritative references.
-- This is a Cantelop SDK app. Use `@cantelop/sdk/api` for Edge routes and `@cantelop/sdk/session` for Session behaviours and managed activities. Let Cantelop manage Workspaces, Sandbox lifecycle, and event transport.
+- This is a Cantelop SDK app. Use `@cantelop/sdk` App definitions and webhooks, and `@cantelop/sdk/session` for Session behaviours and managed activities. Let Cantelop manage Workspaces, Sandbox lifecycle, and event transport.
 - Run `npm run check`, `npm test`, and `npm run build` for code changes. `npm run build` delegates directly to `cantelop build`.
 - Prefer standard Cantelop CLI and SDK capabilities over custom wrappers or duplicate infrastructure. Keep the scaffold focused on application behaviour.
 - Commit completed code changes. The user explicitly requested that code always be committed.

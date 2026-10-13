@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import api from '../src/api.js';
-import { RemoteAppError, type CantelopApp } from '@cantelop/sdk/api';
-import type { Command, Reply } from '../src/contracts.js';
+import { RemoteAppError, type App } from '@cantelop/sdk';
+import type { Command, Event, Reply } from '../src/contracts.js';
 const pair = generateKeyPairSync('ec',{namedCurve:'P-256'});
 const env = {AUTH_PUBLIC_JWK:JSON.stringify(pair.publicKey.export({format:'jwk'})),AUTH_ISSUER:'test',AUTH_AUDIENCE:'api'};
 function token(sub = 'alice', extra = {}, key = pair.privateKey) {
@@ -17,8 +17,8 @@ function fixture(requestError?: Error, authReply: Reply = {type:'auth.status',au
   const opened: any[] = [], workspaces: any[] = [], dispatched: Command[] = [];
   const requested: Command[] = [], requestOptions: any[] = [];
   const app = {
-    workspaces:{open:async (input: any) => {workspaces.push(input); return {id:'ws-1',slug:input.slug};}},
-    sessions:{open:(input: any) => {
+    workspace:(selector: any) => ({resolve:async () => {workspaces.push(selector);return {id:'ws-1',slug:selector.slug};}, session:(config: any) => {
+      const input = {...config,workspaceSlug:selector.slug};
       opened.push(input);
       return {...input,stop:async () => {
           assert.ok(['auth.check','auth.code'].includes(requested.at(-1)?.type ?? ''));stopped.push(input.id);if(stopError) throw stopError;
@@ -31,13 +31,12 @@ function fixture(requestError?: Error, authReply: Reply = {type:'auth.status',au
           return command.type === 'auth.logout' ? logoutReply : command.type === 'auth.check' || command.type === 'auth.code' ? authReply :
             {type:'session.state',configured:true,messages:[],truncated:false};
         },
-        events:async (request: Request) => new Response(request.headers.get('Last-Event-ID'),{headers:{'content-type':'text/event-stream'}})};
-    }}
-  } as unknown as CantelopApp<Command, Reply>;
-  const router = api.create({app,env});
-  const request = async (path: string, body?: unknown, auth = token(), headers = {}) => router.handle(new Request(`https://app.example${path}`,{
+        stream:async function* (options: any) {yield {cursor:options.after,data:'ready'};}};
+    }})
+  } as unknown as App<Command, Event, Reply>;
+  const request = async (path: string, body?: unknown, auth = token(), headers = {}) => api({app,env,request:new Request(`https://app.example/webhooks${path}`,{
     method:body === undefined ? 'GET' : 'POST',headers:{authorization:`Bearer ${auth}`,...headers},
-    ...(body === undefined ? {} : {body:JSON.stringify(body)})}));
+    ...(body === undefined ? {} : {body:JSON.stringify(body)})})});
   return {request,opened,workspaces,dispatched,requested,requestOptions,stopped};
 }
 test('SDK allocates server-selected user Workspace and native-auth Session; repeat provisioning is stable', async () => {
@@ -68,7 +67,7 @@ test('tenant ownership checked before Session dispatch and event streaming', asy
   assert.equal((await f.request(`/v1/events?sessionId=${created.sessionId}`,undefined,token('bob'))).status,404);
   assert.equal(f.opened.length,count);
   const response = await f.request(`/v1/events?sessionId=${created.sessionId}`,undefined,token(),{'Last-Event-ID':'stream:7'});
-  assert.equal(await response.text(),'stream:7');
+  assert.match(await response.text(),/id: stream:7/);
 });
 test('queue, steer, cancel, auth checks and per-session MCP configurations dispatch SDK messages', async () => {
   const f = fixture();
@@ -240,19 +239,18 @@ function converging(failures: number) {
   let workspaceFailures = failures, dispatchFailures = failures, requestFailures = failures;
   const requestIds: (string | undefined)[] = [], notFound = (id?: string) => new RemoteAppError('resource_not_found',404,id);
   const app = {
-    workspaces:{open:async ({slug}: any) => {if(workspaceFailures-->0) throw notFound();return {id:'ws-1',slug};}},
-    sessions:{open:(input: any) => ({...input,stop:async () => {},
+    workspace:({slug}: any) => ({resolve:async () => {if(workspaceFailures-->0) throw notFound();return {id:'ws-1',slug};},
+    session:(input: any) => ({...input,stop:async () => {},
       dispatch:async () => {if(dispatchFailures-->0) throw notFound();return {id:'receipt'};},
       request:async (_command: Command, options: any) => {
         requestIds.push(options.id);
         if(requestFailures-->0) throw notFound('request-1');
         return {type:'auth.status',authenticated:false};
       },
-      events:async () => new Response('',{headers:{'content-type':'text/event-stream'}})})}
-  } as unknown as CantelopApp<Command, Reply>;
-  const router = api.create({app,env});
-  const request = (path: string, body: unknown) => router.handle(new Request(`https://app.example${path}`,
-    {method:'POST',headers:{authorization:`Bearer ${token()}`},body:JSON.stringify(body)}));
+      stream:async function* () {}})})
+  } as unknown as App<Command, Event, Reply>;
+  const request = (path: string, body: unknown) => api({app,env,request:new Request(`https://app.example/webhooks${path}`,
+    {method:'POST',headers:{authorization:`Bearer ${token()}`},body:JSON.stringify(body)})});
   return {request,requestIds};
 }
 
