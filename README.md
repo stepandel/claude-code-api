@@ -6,7 +6,7 @@ The App imports its native runner, auth provider, and Dockerfile from `@cantelop
 
 ## Deploy
 
-Install Node.js 22+, Bun, Docker with `linux/amd64` support, and Cantelop CLI 0.14.0+.
+Install Node.js 22+, Bun, Docker with `linux/amd64` support, and Cantelop CLI 0.15.0+.
 
 ```sh
 git clone https://github.com/stepandel/claude-code-api.git
