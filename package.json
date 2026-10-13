@@ -3,19 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Cantelop Edge API and Session actors hosting unmodified Claude Code",
+  "description": "SDK 1 App hosting unmodified Claude Code with Workspace-native authentication",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "dev": "cantelop dev --container",
     "build": "cantelop build",
-    "check": "tsc -p tsconfig.api.json && tsc -p tsconfig.session.json",
-    "test": "node --import tsx --test test/*.test.ts",
-    "keys": "node scripts/generate-auth-keys.mjs"
+    "check": "tsc -p tsconfig.session.json",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@cantelop/sdk": "1.0.0-alpha.1"
+    "@cantelop/sdk": "1.0.0-alpha.2"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",

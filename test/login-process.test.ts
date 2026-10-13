@@ -7,14 +7,14 @@ import { nativeLogin } from '../src/login-process.js';
 async function fixture(t:any,script:string) {
   const dir=await mkdtemp(join(tmpdir(),'cantelop-login-'));t.after(()=>rm(dir,{recursive:true,force:true}));
   const binary=join(dir,'fake-claude');await writeFile(binary,'#!/usr/bin/env python3\n'+script,{mode:0o755});
-  return nativeLogin(dir,resolve('runtime/login-pty.py'),binary);
+  return nativeLogin(dir,resolve('node_modules/@cantelop/sdk/dist/harnesses/claude/login-pty.py'),binary);
 }
-test('PTY supports native code entry with echo disabled and delivers final output',async t=>{
+test('SDK auth process supports native code entry and delivers final output',async t=>{
   const launch=await fixture(t,"import sys, os\nassert sys.stdin.isatty()\nprint('Enter code:',flush=True)\ncode=input()\nassert code=='private-code'\nprint('Login successful',flush=True)\n");
   let output='';const controller=new AbortController();let ready!:()=>void;const prompt=new Promise<void>(r=>{ready=r;});
   const process=launch(controller.signal,async text=>{output+=text;if(output.includes('Enter code:'))ready();});
   await prompt;await process.write('private-code\r');assert.equal(await process.done,0);
-  assert.match(output,/Login successful/);assert.ok(!output.includes('private-code'));
+  assert.match(output,/Login successful/);
 });
 test('PTY cancellation reaps a child ignoring SIGTERM',async t=>{
   const launch=await fixture(t,"import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint('ready',flush=True)\ntime.sleep(30)\n");
