@@ -37,9 +37,13 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
       try {
         await status(activity.output,message);
         await runtime.run({config:state!.config!,conversationId:state!.conversationId,resume:state!.resume,
-          text:message.text,signal:controller.signal,
+          text:message.text,signal:controller.signal,context,
           initialized:async () => { state!.resume = true; await save(); },
           emit:async event => {
+            const native = event as Record<string,unknown>;
+            if (native.type === 'native.fragment') {
+              await activity.output.send({...native,type:'claude.fragment',id} as Event);return;
+            }
             const json = JSON.stringify(event);
             if (Buffer.byteLength(json) < 48_000) await activity.output.send({type:'claude',id,event});
             else {

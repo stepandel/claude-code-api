@@ -1,8 +1,8 @@
 # Cantelop Claude Code App
 
-Run Anthropic's unmodified Claude Code binary for your users with `@cantelop/sdk@1.0.0-alpha.1`. Each user signs in with their own Claude subscription. Claude's credentials remain in their durable Workspace at `/workspace/.claude`; the App never reads or exports them.
+Run Anthropic's unmodified Claude Code binary for your users with `@cantelop/sdk@1.0.0-alpha.2`. Each user signs in with their own Claude subscription. Claude's credentials remain in their durable Workspace at `/workspace/.claude`; the App never reads or exports them.
 
-The App defines its Session runtime in `src/cantelop.ts`. Your application backend uses the generated SDK client for Workspaces, native login commands, agent messages, and event subscriptions. There are **no custom HTTP routes or webhooks** in this App.
+The App imports its native runner, auth provider, and Dockerfile from `@cantelop/sdk/harnesses/claude`. It defines its application-owned durable mailbox in `src/cantelop.ts`. Your application backend uses the generated SDK client for Workspaces, native login commands, agent messages, and event subscriptions. There are **no custom HTTP routes or webhooks** in this App.
 
 ## Deploy
 
@@ -34,7 +34,7 @@ const status = await auth.request({ type: 'auth.check' }, { timeoutMs: 30_000 })
 
 ### Native sign-in
 
-The dedicated auth Session runs stock `claude auth status`, `claude auth login`, and `claude auth logout`. Claude's native login process prints its sign-in URL and accepts the code the user receives from Claude. The existing PTY helper relays that input directly to the unmodified CLI; it never persists terminal output or input.
+The dedicated auth Session runs stock `claude auth status`, `claude auth login`, and `claude auth logout`. Claude's native login process prints its sign-in URL and accepts the code the user receives from Claude. The SDK's packaged PTY helper relays that input directly to the unmodified CLI; it never persists terminal output or input.
 
 ```js
 const login = await auth.request({ type: 'auth.login' }, { timeoutMs: 45_000 });
@@ -81,10 +81,10 @@ Sessions share a user's files and login but have separate conversations. Coordin
 | --- | --- |
 | `src/cantelop.ts` | SDK App definition and Dockerfile |
 | `src/session.ts` | Durable queue, managed turns, steering, cancellation, recovery |
-| `src/claude.ts` | Stock CLI process, tool settings, stream parsing, auth status |
+| `src/claude.ts` | Thin adapter to the SDK-maintained runner and auth provider |
 | `src/state.ts` | Session state under `/workspace/.cantelop` |
-| `src/login.ts`, `src/login-process.ts`, `runtime/login-pty.py` | Existing native login lifecycle |
-| `docker/Dockerfile` | Pinned, checksum-verified Claude binary |
+| `src/login.ts`, `src/login-process.ts` | Demo login UI protocol around the SDK auth process |
+| `@cantelop/sdk/harnesses/claude` | Shared native process handling, authentication, conversation state, and Dockerfile |
 
 ## Hosting terms
 
