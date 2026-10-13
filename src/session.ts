@@ -120,4 +120,3 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
 const behaviour = createBehaviour();
 export const receive = behaviour.receive;
 export const onRecover = behaviour.onRecover;
-
