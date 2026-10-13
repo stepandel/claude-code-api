@@ -1,4 +1,4 @@
-import { defineSessionBehaviour, type SessionContext, type SessionOutput } from '@cantelop/sdk/session';
+import { type SessionBehaviour, type SessionContext, type SessionOutput } from '@cantelop/sdk/session';
 import { randomUUID } from 'node:crypto';
 import { NativeAuthRequired, NativeClaude, type ClaudeRuntime } from './claude.js';
 import { Login } from './login.js';
@@ -64,7 +64,7 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
       if (!activity.signal.aborted) await status(activity.output,message);
     });
   }
-  return defineSessionBehaviour<Command,Event,Reply>({
+  return {
     async receive(context) {
       await initialize(context.session.id);
       const command = context.message.payload;
@@ -115,6 +115,9 @@ export function createBehaviour(runtime: ClaudeRuntime = new NativeClaude(), wor
       // The interrupted turn stays interrupted. Queued, not-yet-started work resumes.
       context.send({type:'drain'});
     }
-  });
+  } satisfies SessionBehaviour<Command,Event,Reply>;
 }
-export default createBehaviour();
+const behaviour = createBehaviour();
+export const receive = behaviour.receive;
+export const onRecover = behaviour.onRecover;
+

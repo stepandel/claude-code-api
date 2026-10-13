@@ -1,6 +1,6 @@
 # Cantelop Claude Code API
 
-An HTTP API for running Claude Code on behalf of your users, built on [Cantelop](https://console.cantelop.dev/docs) with `@cantelop/sdk@0.12.0`.
+An HTTP API for running Claude Code on behalf of your users, built on [Cantelop](https://console.cantelop.dev/docs) with `@cantelop/sdk@1.0.0-alpha.1`.
 
 Each user signs in to Claude Code with **their own** Claude subscription through Claude Code's native login. Your application only verifies who the user is. It never sees, stores, or proxies Claude credentials. Claude Code runs as Anthropic's unmodified native binary inside a Cantelop Sandbox.
 
@@ -12,7 +12,7 @@ Each user signs in to Claude Code with **their own** Claude subscription through
 - **One disposable Sandbox per active Session.** Cantelop starts a Sandbox on demand, mounts the user's Workspace at `/workspace`, and releases it when idle. The Workspace survives, so a new Sandbox picks up the existing Claude login.
 - **Concurrent Sessions share a Workspace.** They share login and files but keep separate Claude conversations, queues, and configuration. Sessions can edit the same files, so callers must coordinate conflicting work.
 
-Cantelop handles Sandbox lifecycle, Workspace mounts, message serialization, activity supervision, and event transport over SSE/WebSocket.
+Cantelop handles Sandbox lifecycle, Workspace mounts, message serialization, activity supervision, and event transport; this API adapts SDK subscriptions to browser SSE.
 
 ### Claude Code hosting terms
 
@@ -27,7 +27,7 @@ The quick start deploys the API. To connect it to your product, continue with [E
 ### Prerequisites
 
 - Node.js 22+, Bun, and Docker with `linux/amd64` support
-- Cantelop CLI 0.11.2+ (SDK build protocol 5):
+- Cantelop CLI 0.14.0+ (SDK build protocol 6):
 
   ```sh
   brew install stepandel/tap/cantelop
@@ -64,7 +64,7 @@ This writes the private JWK to `auth.private.jwk.json` (mode 600, ignored by git
 
 These values authenticate callers to *your application* only. Claude authentication happens later, per user. Never add an Anthropic API key, Claude token, JWT signing key, or shared provider credential to this App.
 
-The App slug is the `app` field in `cantelop.json` (default `cantelop-claude-api`). Change it now if you need a different or environment-specific slug.
+The App slug is the `name` field in `src/cantelop.ts` (default `cantelop-claude-api`). Change it now if you need a different or environment-specific slug.
 
 ### 2. Check and build
 
@@ -102,7 +102,7 @@ Wait for the new release to become active before sending traffic. See the [Cante
 ### 5. Smoke test
 
 ```sh
-curl "$BASE_URL/health"   # {"ok":true}
+curl "$BASE_URL/"   # {"ok":true}
 ```
 
 Then connect a Claude account with the [Claude authentication](#claude-authentication) protocol and follow the [example workflow](#example-workflow).
@@ -125,16 +125,16 @@ Tokens must be signed on your server. A token signed in the browser lets anyone 
 
 ### Connecting Claude
 
-1. `POST /v1/auth` with `{}`. If `authenticated` is `true`, skip ahead.
-2. `POST /v1/auth/login` with `{}`. Show the returned `url` to the user and keep the `attemptId`.
+1. `POST /webhooks/v1/auth` with `{}`. If `authenticated` is `true`, skip ahead.
+2. `POST /webhooks/v1/auth/login` with `{}`. Show the returned `url` to the user and keep the `attemptId`.
 3. The user signs in at Anthropic and pastes the code Claude displays into your UI.
-4. `POST /v1/auth/login/code` with `{attemptId, code}`. It returns `authenticated: true` once Claude has stored its credentials.
+4. `POST /webhooks/v1/auth/login/code` with `{attemptId, code}`. It returns `authenticated: true` once Claude has stored its credentials.
 
 See [Claude authentication](#claude-authentication) for errors, cancellation, and re-authentication.
 
 ### Streaming agent output
 
-Agent Sessions report progress as [events](#events). Your backend can consume `/v1/events` directly. To stream events on to a browser, add a same-origin endpoint, because `EventSource` cannot set an `Authorization` header:
+Agent Sessions report progress as [events](#events). Your backend can consume `/webhooks/v1/events` directly. To stream events on to a browser, add a same-origin endpoint, because `EventSource` cannot set an `Authorization` header:
 
 - Attach the user's token on the server and validate `sessionId` before forwarding. The API also checks Session ownership.
 - Stream the body through unbuffered: set `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`.
@@ -144,7 +144,7 @@ Subscribe before sending messages so no events are missed. A subscription withou
 
 ## API
 
-Every `/v1/*` request needs your application JWT:
+Every `/webhooks/v1/*` request needs your application JWT:
 
 ```
 Authorization: Bearer $USER_TOKEN
@@ -155,17 +155,17 @@ The token must be ES256-signed with `sub`, `iss`, `aud`, and `exp` claims matchi
 
 | Method | Route | Body | Response |
 | --- | --- | --- | --- |
-| GET | `/health` | — | `200 {"ok":true}` (public) |
-| POST | `/v1/auth` | `{}` | `200` Claude auth status |
-| POST | `/v1/auth/login` | `{force?}` | `200 {attemptId, url, expiresAt}`, or status if already signed in |
-| POST | `/v1/auth/login/code` | `{attemptId, code}` | `200` Claude auth status |
-| POST | `/v1/auth/cancel` | `{attemptId}` | `200 {type: "auth.cancelled", attemptId}` |
-| POST | `/v1/auth/logout` | `{}` | `200` signed-out status |
-| POST | `/v1/sessions` | Session configuration | `202 {sessionId, receiptId}` |
-| POST | `/v1/messages` | `{sessionId, text, mode?, messageId?}` | `202 {sessionId, receiptId, messageId}` |
-| POST | `/v1/cancel` | `{sessionId, messageId}` | `202 {sessionId, receiptId, messageId}` |
-| POST | `/v1/snapshot` | `{sessionId}` | `200` Session summary |
-| GET | `/v1/events?sessionId=…` | — | SSE or WebSocket event stream |
+| GET | `/` | — | `200 {"ok":true}` (public) |
+| POST | `/webhooks/v1/auth` | `{}` | `200` Claude auth status |
+| POST | `/webhooks/v1/auth/login` | `{force?}` | `200 {attemptId, url, expiresAt}`, or status if already signed in |
+| POST | `/webhooks/v1/auth/login/code` | `{attemptId, code}` | `200` Claude auth status |
+| POST | `/webhooks/v1/auth/cancel` | `{attemptId}` | `200 {type: "auth.cancelled", attemptId}` |
+| POST | `/webhooks/v1/auth/logout` | `{}` | `200` signed-out status |
+| POST | `/webhooks/v1/sessions` | Session configuration | `202 {sessionId, receiptId}` |
+| POST | `/webhooks/v1/messages` | `{sessionId, text, mode?, messageId?}` | `202 {sessionId, receiptId, messageId}` |
+| POST | `/webhooks/v1/cancel` | `{sessionId, messageId}` | `202 {sessionId, receiptId, messageId}` |
+| POST | `/webhooks/v1/snapshot` | `{sessionId}` | `200` Session summary |
+| GET | `/webhooks/v1/events?sessionId=…` | — | SSE event stream |
 
 **Synchronous vs. asynchronous.** Auth calls and snapshots return their result directly with HTTP 200. They wait up to 30 seconds (45 for login and logout), then return `504` with `code: "request_wait_timeout"`. A timeout stops the wait, not the work. Session and message calls return `202` and report outcomes as events.
 
@@ -178,7 +178,7 @@ The token must be ES256-signed with `sub`, `iss`, `aud`, and `exp` claims matchi
 Create a Session:
 
 ```sh
-curl "$BASE_URL/v1/sessions" \
+curl "$BASE_URL/webhooks/v1/sessions" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -200,10 +200,10 @@ curl "$BASE_URL/v1/sessions" \
 Creation is asynchronous. Watch for `session.ready` and `auth.status` events. Save the returned `sessionId` as `SESSION_ID`, then subscribe and send work:
 
 ```sh
-curl -N "$BASE_URL/v1/events?sessionId=$SESSION_ID" \
+curl -N "$BASE_URL/webhooks/v1/events?sessionId=$SESSION_ID" \
   -H "Authorization: Bearer $USER_TOKEN"
 
-curl "$BASE_URL/v1/messages" \
+curl "$BASE_URL/webhooks/v1/messages" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d "{\"sessionId\":\"$SESSION_ID\",\"text\":\"Inspect this project\",\"mode\":\"queue\"}"
@@ -245,7 +245,7 @@ Each response includes a platform `receiptId` and an application `messageId`. To
 Cancel a queued or running message:
 
 ```sh
-curl "$BASE_URL/v1/cancel" \
+curl "$BASE_URL/webhooks/v1/cancel" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d "{\"sessionId\":\"$SESSION_ID\",\"messageId\":\"$MESSAGE_ID\"}"
@@ -255,7 +255,7 @@ Finished messages are unaffected. Tool effects that already completed cannot be 
 
 ### Events
 
-`/v1/events` returns SDK-native SSE. WebSocket clients use the `cantelop.events.v1` subprotocol. Browser `EventSource` and `WebSocket` cannot set an `Authorization` header, so browsers need a [same-origin endpoint](#streaming-agent-output).
+`/webhooks/v1/events` adapts the SDK subscription to SSE. Browser `EventSource` cannot set an `Authorization` header, so browsers need a [same-origin endpoint](#streaming-agent-output).
 
 Each application event arrives inside a Cantelop delivery envelope. **Read the event from `data`:**
 
@@ -280,7 +280,7 @@ data: {"code":"event_stream_reset"}
 After a stream reset, fetch a snapshot:
 
 ```sh
-curl "$BASE_URL/v1/snapshot" \
+curl "$BASE_URL/webhooks/v1/snapshot" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d "{\"sessionId\":\"$SESSION_ID\"}"
@@ -295,24 +295,24 @@ Each user signs in to their own Claude account. The API runs the unmodified `cla
 ### Login
 
 ```sh
-curl "$BASE_URL/v1/auth/login" \
+curl "$BASE_URL/webhooks/v1/auth/login" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' -d '{}'
 # {"sessionId":"…:auth","type":"auth.login","attemptId":"…","url":"https://claude.com/cai/oauth/authorize?…","expiresAt":1790000000000}
 
-curl "$BASE_URL/v1/auth/login/code" \
+curl "$BASE_URL/webhooks/v1/auth/login/code" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d "{\"attemptId\":\"$ATTEMPT_ID\",\"code\":\"$CODE\"}"
 # {"sessionId":"…:auth","type":"auth.status","authenticated":true}
 ```
 
-- If the user is already signed in, `/v1/auth/login` returns `{type: "auth.status", authenticated: true}` and starts nothing. Pass `force: true` to sign in again anyway, for example after `auth.required`.
-- A user has at most one attempt. Calling `/v1/auth/login` again while it is open returns the same `attemptId` and `url`, so the call is safe to retry.
+- If the user is already signed in, `/webhooks/v1/auth/login` returns `{type: "auth.status", authenticated: true}` and starts nothing. Pass `force: true` to sign in again anyway, for example after `auth.required`.
+- A user has at most one attempt. Calling `/webhooks/v1/auth/login` again while it is open returns the same `attemptId` and `url`, so the call is safe to retry.
 - An attempt lasts 10 minutes (`expiresAt`, in epoch milliseconds). It ends when Claude exits, on cancel, on logout, or when the Sandbox is replaced.
 - The code must be 1–2,048 printable ASCII characters without spaces. If Claude does not accept it, the call returns `code_rejected` and the attempt stays open for another try.
-- Once authentication is confirmed, `/v1/auth/login/code` and `/v1/auth` stop the auth Sandbox before returning. A failed stop is returned as an error so the caller can retry. Credentials remain in the Workspace.
-- `POST /v1/auth/cancel` with `{attemptId}` ends the attempt and reaps the login process. Cancelling an attempt that is not running is a no-op.
+- Once authentication is confirmed, `/webhooks/v1/auth/login/code` and `/webhooks/v1/auth` stop the auth Sandbox before returning. A failed stop is returned as an error so the caller can retry. Credentials remain in the Workspace.
+- `POST /webhooks/v1/auth/cancel` with `{attemptId}` ends the attempt and reaps the login process. Cancelling an attempt that is not running is a no-op.
 
 Only complete HTTPS links to Anthropic domains (`claude.ai`, `claude.com`, `anthropic.com`) are returned. The raw terminal output stays in Sandbox memory and is never logged, emitted, or persisted. The PTY helper runs with input echo off and discards stderr.
 
@@ -324,11 +324,11 @@ The code the user pastes travels through Cantelop's message transport, which may
 
 Claude Code refreshes its own credentials in the Workspace. A native `authentication_failed` error or an explicit signed-out status emits `auth.required` with the affected message ID. Status-command failures, billing errors, rate limits, and network errors are not treated as sign-outs. An internal retry that succeeds emits nothing.
 
-When a client receives `auth.required`, it should pause new work for that user and offer sign-in with `force: true`. Resume only after `/v1/auth/login/code` returns `authenticated: true`. Interrupted work is never replayed automatically.
+When a client receives `auth.required`, it should pause new work for that user and offer sign-in with `force: true`. Resume only after `/webhooks/v1/auth/login/code` returns `authenticated: true`. Interrupted work is never replayed automatically.
 
 ### Sign-out
 
-`POST /v1/auth/logout` cancels any pending login, runs `claude auth logout`, and confirms signed-out status. Only then does it return `{sessionId, type: "auth.status", authenticated: false}`. The auth Sandbox is released as soon as it is idle. Workspace files and conversations are kept. Stop the user's agent tasks first. A timeout does not confirm sign-out, so retry it.
+`POST /webhooks/v1/auth/logout` cancels any pending login, runs `claude auth logout`, and confirms signed-out status. Only then does it return `{sessionId, type: "auth.status", authenticated: false}`. The auth Sandbox is released as soon as it is idle. Workspace files and conversations are kept. Stop the user's agent tasks first. A timeout does not confirm sign-out, so retry it.
 
 ## Error reference
 
@@ -345,10 +345,10 @@ HTTP errors return `{"error": "<message>"}` for request validation, and `{"error
 | 504 | `request_wait_timeout` | A synchronous call stopped waiting; the work may still finish | Yes, calls are idempotent |
 | 502/503 | `stop_failed`, other platform codes | Transient platform failure | Yes, with backoff |
 | 502 | `request_outcome_unknown` | The platform result could not be read | Yes, calls are idempotent |
-| 409 | `login_not_active` | The attempt expired, was cancelled, or already finished | Start a new login, or check `/v1/auth` |
+| 409 | `login_not_active` | The attempt expired, was cancelled, or already finished | Start a new login, or check `/webhooks/v1/auth` |
 | 422 | `code_rejected` | Claude asked for the code again | Yes, with a corrected code |
 | 502 | `login_failed` | Claude printed no sign-in link, or exited without credentials | Start a new login |
-| 504 | `login_timeout` | Claude did not respond to the code within 20 seconds; the attempt stays open | Check `/v1/auth` before retrying |
+| 504 | `login_timeout` | Claude did not respond to the code within 20 seconds; the attempt stays open | Check `/webhooks/v1/auth` before retrying |
 
 Session commands are asynchronous, so their failures arrive as events:
 
@@ -375,7 +375,7 @@ A Session holds at most 1,000 messages. This is not a transactional database, an
 
 | Path | Purpose |
 | --- | --- |
-| `src/api.ts` | Edge API (`defineApi`), JWT verification, Workspace/Session routing, event streaming |
+| `src/api.ts` | Edge webhook handlers, JWT verification, Workspace/Session routing, event streaming |
 | `src/session.ts` | Session behaviour (`defineSessionBehaviour`), managed turns, queue/steer/cancel, recovery |
 | `src/claude.ts` | Claude CLI subprocess, cancellation, stream parsing, tool/MCP settings, auth status |
 | `src/state.ts` | Durable Session state under `/workspace/.cantelop` |
@@ -405,7 +405,7 @@ Tests exercise the real SDK route definitions, JWT and tenant checks, Session di
 
 ## References
 
-- [Cantelop SDK v0.12.0](https://github.com/stepandel/cantelop-sdk/tree/sdk-v0.12.0), verified against GitHub and npm on September 23, 2026
+- [Cantelop SDK v1.0.0-alpha.1](https://github.com/stepandel/cantelop-sdk/tree/sdk-v1.0.0-alpha.1), verified against GitHub and npm on October 12, 2026
 - [Cantelop platform docs](https://console.cantelop.dev/docs)
 
 ## License
